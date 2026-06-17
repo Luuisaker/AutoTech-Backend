@@ -7,9 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.utils.add_routers import add_routers
 
 from src.modules.users.infrastructure.router import UserRouter
+from src.modules.vehicles.infrastructure.router import VehicleRouter
 
 routers = [
     UserRouter(),
+    VehicleRouter(),
 ]
 
 
