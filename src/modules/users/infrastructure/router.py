@@ -1,12 +1,13 @@
 from uuid import UUID
-from fastapi import Depends, APIRouter, Response
+from fastapi import Depends, APIRouter, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from src.core.infrastructure.router import BaseRouter
+from src.core.application.base_response import Response as CoreResponse
 from src.modules.users.infrastructure.service import UserService, get_user_service
 from src.modules.users.infrastructure.auth import get_current_user_id
 from src.utils.handle_service_result import handle_service_result
-from src.modules.users.application.create import CreateUserRequest
-from src.modules.users.application.login import LoginRequest
+from src.modules.users.application.create import CreateUserRequest, UserDTO
+from src.modules.users.application.login import LoginRequest, TokenResponse
 
 
 class UserRouter(BaseRouter):
@@ -17,7 +18,9 @@ class UserRouter(BaseRouter):
         super().__init__(APIRouter(prefix=self.__prefix__, tags=[self.__tag__]))
 
     def _register_routes(self) -> None:
-        @self._router.post("/register", status_code=201)
+        @self._router.post(
+            "/register", response_model=CoreResponse[UserDTO], status_code=201
+        )
         async def create(
             body: CreateUserRequest,
             response: Response,
@@ -27,18 +30,22 @@ class UserRouter(BaseRouter):
             handle_service_result(result, response)
             return result
 
-        @self._router.post("/token")
+        @self._router.post("/token", response_model=TokenResponse)
         async def token(
             form: OAuth2PasswordRequestForm = Depends(),
-            response: Response = None,
             service: UserService = Depends(get_user_service),
         ):
             body = LoginRequest(email=form.username, password=form.password)
             result = await service.login(body)
-            handle_service_result(result, response)
-            return result
+            if not result or not result.success:
+                raise HTTPException(
+                    status_code=result.status_code, detail=result.message
+                )
+            return result.content
 
-        @self._router.post("/login", status_code=200)
+        @self._router.post(
+            "/login", response_model=CoreResponse[TokenResponse], status_code=200
+        )
         async def login(
             body: LoginRequest,
             response: Response,
@@ -48,7 +55,7 @@ class UserRouter(BaseRouter):
             handle_service_result(result, response)
             return result
 
-        @self._router.get("/me")
+        @self._router.get("/me", response_model=CoreResponse[UserDTO])
         async def me(
             response: Response,
             service: UserService = Depends(get_user_service),
