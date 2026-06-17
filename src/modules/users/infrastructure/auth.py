@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 
 from src.config.settings import settings
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/token")
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7

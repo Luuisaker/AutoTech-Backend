@@ -1,5 +1,6 @@
 from uuid import UUID
 from fastapi import Depends, APIRouter, Response
+from fastapi.security import OAuth2PasswordRequestForm
 from src.core.infrastructure.router import BaseRouter
 from src.modules.users.infrastructure.service import UserService, get_user_service
 from src.modules.users.infrastructure.auth import get_current_user_id
@@ -23,6 +24,17 @@ class UserRouter(BaseRouter):
             service: UserService = Depends(get_user_service),
         ):
             result = await service.create(body)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post("/token")
+        async def token(
+            form: OAuth2PasswordRequestForm = Depends(),
+            response: Response = None,
+            service: UserService = Depends(get_user_service),
+        ):
+            body = LoginRequest(email=form.username, password=form.password)
+            result = await service.login(body)
             handle_service_result(result, response)
             return result
 
