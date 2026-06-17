@@ -1,19 +1,10 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+from src.config.server import App
+from src.config.settings import settings
 
-app = FastAPI(
-    title="AutoTech API", description="Backend API for AutoTech", version="1.0.0"
-)
+application = App()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = application.server
 
-
-@app.get("/health")
-async def health_check():
-    return {"status": "ok", "message": "AutoTech API is running"}
+if __name__ == "__main__":
+    uvicorn.run("src.main:app", host=settings.HOST, port=settings.PORT, reload=True)
