@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import bcrypt
 from typing import Type
 from fastapi import Depends
@@ -7,7 +9,9 @@ from src.core.infrastructure.transaction import get_transaction
 from src.core.application.base_response import Response
 from src.modules.users.infrastructure.mapper import UserMapper
 from src.modules.users.application.create import CreateUserRequest, UserDTO
+from src.modules.users.application.login import LoginRequest, TokenResponse
 from src.modules.users.domain.entity import User
+from src.modules.users.infrastructure.auth import create_access_token
 from src.modules.users.infrastructure.repository import UserRepository
 
 
@@ -56,6 +60,53 @@ class UserService:
             success=True,
             message="Usuario creado exitosamente",
             content=UserDTO.model_validate(self.__mapper.to_entity(u_model)),
+        )
+
+    async def login(self, dto: LoginRequest) -> Response:
+        async with self._transaction(user=UserRepository) as t:
+            user_model = await t.user.get_by_email(dto.email)
+
+        if not user_model:
+            return Response(
+                status_code=401,
+                success=False,
+                message="Credenciales inválidas",
+            )
+
+        if not bcrypt.checkpw(
+            dto.password.encode("utf-8"),
+            user_model.password_hash.encode("utf-8"),
+        ):
+            return Response(
+                status_code=401,
+                success=False,
+                message="Credenciales inválidas",
+            )
+
+        token = create_access_token(user_model.id)
+
+        return Response(
+            status_code=200,
+            success=True,
+            content=TokenResponse(access_token=token),
+            message="Inicio de sesión exitoso",
+        )
+
+    async def get_me(self, user_id: UUID) -> Response:
+        async with self._transaction(user=UserRepository) as t:
+            user_model = await t.user.get(str(user_id))
+
+        if not user_model:
+            return Response(
+                status_code=404,
+                success=False,
+                message="Usuario no encontrado",
+            )
+
+        return Response(
+            status_code=200,
+            success=True,
+            content=UserDTO.model_validate(self.__mapper.to_entity(user_model)),
         )
 
 
