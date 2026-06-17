@@ -83,7 +83,7 @@ class UserService:
                 message="Credenciales inválidas",
             )
 
-        token = create_access_token(user_model.id)
+        token = create_access_token(user_model.id, user_model.role)
 
         return Response(
             status_code=200,
