@@ -6,7 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.utils.add_routers import add_routers
 
-routers = []
+from src.modules.users.infrastructure.router import UserRouter
+
+routers = [
+    UserRouter(),
+]
 
 
 class App:

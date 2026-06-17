@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     async_scoped_session,
 )
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import DeclarativeBase
 
 from src.config.settings import settings
 
@@ -25,8 +25,6 @@ session_factory = async_scoped_session(
     scopefunc=get_current_task,
 )
 
-Base = declarative_base()
-
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     session = session_factory()
@@ -38,3 +36,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         raise
     finally:
         await session.close()
+
+
+class Base(DeclarativeBase):
+    pass

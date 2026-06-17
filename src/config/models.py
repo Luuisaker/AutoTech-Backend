@@ -4,7 +4,7 @@ from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
-from src.core.database import Base
+from src.config.database import Base
 
 
 class User(Base):

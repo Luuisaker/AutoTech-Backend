@@ -1,0 +1,13 @@
+from dataclasses import dataclass
+from src.core.domain.entity import Entity
+
+
+@dataclass
+class User(Entity):
+    email: str
+    password_hash: str
+    role: str
+    first_name: str
+    last_name: str
+    ci: str
+    phone: str

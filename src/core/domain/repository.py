@@ -1,17 +1,16 @@
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
-from src.core.domain.entity import Entity
+from typing import Generic, TypeVar, Sequence
 
-T = TypeVar("T", bound=Entity)
+T = TypeVar("T")
 
 
 class GenericRepository(Generic[T], ABC):
     @abstractmethod
-    async def get(self, id_: str) -> T:
+    async def get(self, id_: str) -> T | None:
         raise NotImplementedError
 
     @abstractmethod
-    async def list(self, **filters) -> list[T]:
+    async def list(self, offset: int = 0, limit: int = 100, **filters) -> Sequence[T]:
         raise NotImplementedError
 
     @abstractmethod
@@ -19,5 +18,5 @@ class GenericRepository(Generic[T], ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def update(self, record: T) -> None:
+    async def update(self, record: T) -> T:
         raise NotImplementedError
