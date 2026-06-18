@@ -1,7 +1,11 @@
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from datetime import datetime
 from src.core.application.base_request import Request
+from src.utils.venezuelan_validators import (
+    validate_ci as _validate_ci,
+    validate_phone as _validate_phone,
+)
 
 
 class CreateUserRequest(Request):
@@ -11,6 +15,16 @@ class CreateUserRequest(Request):
     last_name: str = Field(..., min_length=2, max_length=64)
     ci: str = Field(..., min_length=6, max_length=15)
     phone: str = Field(..., min_length=6, max_length=15)
+
+    @field_validator("ci")
+    @classmethod
+    def check_ci(cls, v: str) -> str:
+        return _validate_ci(v)
+
+    @field_validator("phone")
+    @classmethod
+    def check_phone(cls, v: str) -> str:
+        return _validate_phone(v)
 
 
 class UserDTO(BaseModel):

@@ -11,6 +11,8 @@ from src.modules.workshops.application.create import (
     UpdateWorkshopRequest,
     WorkshopDTO,
     WorkshopListDTO,
+    VerificationRequestDTO,
+    VerificationRequestListDTO,
 )
 from src.modules.workshops.domain.entity import Workshop
 from src.modules.workshops.infrastructure.repository import WorkshopRepository
@@ -25,7 +27,9 @@ class WorkshopService:
     ) -> None:
         self._transaction = transaction
 
-    async def create(self, dto: CreateWorkshopRequest, owner_id: UUID) -> Response:
+    async def create(
+        self, dto: CreateWorkshopRequest, owner_id: UUID, verification_document_url: str
+    ) -> Response:
         async with self._transaction(workshop=WorkshopRepository) as t:
             if await t.workshop.get_by_rif(dto.rif):
                 return Response(
@@ -41,7 +45,7 @@ class WorkshopService:
                 address=dto.address,
                 latitude=dto.latitude,
                 longitude=dto.longitude,
-                verification_document_url=dto.verification_document_url,
+                verification_document_url=verification_document_url,
             )
 
             w_model = await t.workshop.add(self.__mapper.to_model(workshop_entity))
@@ -76,6 +80,32 @@ class WorkshopService:
             ),
         )
 
+    async def list_pending_verifications(self) -> Response:
+        async with self._transaction(workshop=WorkshopRepository) as t:
+            workshops = await t.workshop.list_pending_verifications()
+
+        return Response(
+            status_code=200,
+            success=True,
+            content=VerificationRequestListDTO(
+                requests=[
+                    VerificationRequestDTO(
+                        id=w.id,
+                        owner_id=w.owner_id,
+                        owner_first_name=w.owner.first_name,
+                        owner_last_name=w.owner.last_name,
+                        owner_email=w.owner.email,
+                        name=w.name,
+                        rif=w.rif,
+                        address=w.address,
+                        verification_document_url=w.verification_document_url,
+                        created_at=w.created_at,
+                    )
+                    for w in workshops
+                ]
+            ),
+        )
+
     async def get_by_id(self, workshop_id: UUID) -> Response:
         async with self._transaction(workshop=WorkshopRepository) as t:
             w_model = await t.workshop.get(str(workshop_id))
@@ -94,7 +124,11 @@ class WorkshopService:
         )
 
     async def update(
-        self, workshop_id: UUID, dto: UpdateWorkshopRequest, owner_id: UUID
+        self,
+        workshop_id: UUID,
+        dto: UpdateWorkshopRequest,
+        owner_id: UUID,
+        verification_document_url: str | None = None,
     ) -> Response:
         async with self._transaction(workshop=WorkshopRepository) as t:
             w_model = await t.workshop.get(str(workshop_id))
@@ -121,8 +155,8 @@ class WorkshopService:
             w_model.latitude = dto.latitude
         if dto.longitude is not None:
             w_model.longitude = dto.longitude
-        if dto.verification_document_url is not None:
-            w_model.verification_document_url = dto.verification_document_url
+        if verification_document_url is not None:
+            w_model.verification_document_url = verification_document_url
 
         async with self._transaction(workshop=WorkshopRepository) as t:
             w_model = await t.workshop.update(w_model)

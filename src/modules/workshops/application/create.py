@@ -1,7 +1,8 @@
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from datetime import datetime
 from src.core.application.base_request import Request
+from src.utils.venezuelan_validators import validate_rif as _validate_rif
 
 
 class CreateWorkshopRequest(Request):
@@ -10,7 +11,11 @@ class CreateWorkshopRequest(Request):
     address: str = Field(..., min_length=5, max_length=500)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
-    verification_document_url: str | None = None
+
+    @field_validator("rif")
+    @classmethod
+    def check_rif(cls, v: str) -> str:
+        return _validate_rif(v)
 
 
 class UpdateWorkshopRequest(Request):
@@ -18,7 +23,6 @@ class UpdateWorkshopRequest(Request):
     address: str | None = Field(default=None, min_length=5, max_length=500)
     latitude: float | None = None
     longitude: float | None = None
-    verification_document_url: str | None = None
 
 
 class WorkshopDTO(BaseModel):
@@ -39,3 +43,20 @@ class WorkshopDTO(BaseModel):
 
 class WorkshopListDTO(BaseModel):
     workshops: list[WorkshopDTO]
+
+
+class VerificationRequestDTO(BaseModel):
+    id: UUID
+    owner_id: UUID
+    owner_first_name: str
+    owner_last_name: str
+    owner_email: str
+    name: str
+    rif: str
+    address: str
+    verification_document_url: str | None
+    created_at: datetime
+
+
+class VerificationRequestListDTO(BaseModel):
+    requests: list[VerificationRequestDTO]

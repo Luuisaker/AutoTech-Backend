@@ -14,6 +14,7 @@ class WorkshopMapper(GenericMapper[Workshop, WorkshopModel]):
             latitude=model.latitude,
             longitude=model.longitude,
             is_certified=model.is_certified,
+            average_rating=model.average_rating,
             verification_document_url=model.verification_document_url,
             created_at=model.created_at,
         )
@@ -28,6 +29,7 @@ class WorkshopMapper(GenericMapper[Workshop, WorkshopModel]):
             latitude=entity.latitude,
             longitude=entity.longitude,
             is_certified=entity.is_certified,
+            average_rating=entity.average_rating,
             verification_document_url=entity.verification_document_url,
             created_at=entity.created_at,
         )

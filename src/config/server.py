@@ -1,9 +1,12 @@
+import os
 import sys
 import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
+from src.config.settings import settings
 from src.utils.add_routers import add_routers
 
 from src.modules.users.infrastructure.router import UserRouter
@@ -30,13 +33,18 @@ class App:
 
         self._setup_middlewares()
         self._setup_base_routes()
+        self._setup_static_files()
 
         add_routers(self.server, routers)
 
     def _setup_middlewares(self) -> None:
+        origins = [
+            "http://localhost:8080",
+            "http://127.0.0.1:8080",
+        ]
         self.server.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=origins,
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
@@ -46,3 +54,11 @@ class App:
         @self.server.get("/health", tags=["Status"])
         async def health_check():
             return {"status": "ok", "message": "AutoTech API is running"}
+
+    def _setup_static_files(self) -> None:
+        os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+        self.server.mount(
+            "/uploads",
+            StaticFiles(directory=settings.UPLOAD_DIR),
+            name="uploads",
+        )

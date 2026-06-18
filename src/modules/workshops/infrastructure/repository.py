@@ -1,6 +1,7 @@
 from typing import Sequence, cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
 from src.core.infrastructure.sql_repository import GenericSQLRepository
@@ -48,5 +49,21 @@ class WorkshopRepository(GenericSQLRepository[WorkshopModel]):
             stmt = stmt.where(*where_clauses)
 
         stmt = stmt.limit(limit).offset(offset)
+        r = await self._session.execute(stmt)
+        return r.scalars().all()
+
+    async def list_pending_verifications(self) -> Sequence[WorkshopModel]:
+        stmt = (
+            select(WorkshopModel)
+            .where(
+                cast(ColumnElement[bool], WorkshopModel.is_certified == 0),
+                cast(
+                    ColumnElement[bool],
+                    WorkshopModel.verification_document_url.isnot(None),
+                ),
+            )
+            .options(selectinload(WorkshopModel.owner))
+            .order_by(WorkshopModel.created_at.desc())
+        )
         r = await self._session.execute(stmt)
         return r.scalars().all()

@@ -6,8 +6,7 @@ from src.modules.vehicles.infrastructure.service import (
     VehicleService,
     get_vehicle_service,
 )
-from src.modules.users.infrastructure.auth import get_current_user_id, CurrentUser
-from src.modules.users.infrastructure.permissions import require_roles
+from src.modules.users.infrastructure.auth import get_current_user_id
 from src.utils.handle_service_result import handle_service_result
 from src.modules.vehicles.application.create import (
     CreateVehicleRequest,
@@ -35,7 +34,6 @@ class VehicleRouter(BaseRouter):
             body: CreateVehicleRequest,
             response: Response,
             service: VehicleService = Depends(get_vehicle_service),
-            _: CurrentUser = Depends(require_roles("CLIENT", "WORKSHOP_OWNER")),
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.create(body, user_id)
@@ -46,7 +44,6 @@ class VehicleRouter(BaseRouter):
         async def list_vehicles(
             response: Response,
             service: VehicleService = Depends(get_vehicle_service),
-            _: CurrentUser = Depends(require_roles("CLIENT", "WORKSHOP_OWNER")),
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.list_by_owner(user_id)
@@ -58,7 +55,6 @@ class VehicleRouter(BaseRouter):
             id: UUID,
             response: Response,
             service: VehicleService = Depends(get_vehicle_service),
-            _: CurrentUser = Depends(require_roles("CLIENT", "WORKSHOP_OWNER")),
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.get_by_id(id, user_id)
@@ -71,7 +67,6 @@ class VehicleRouter(BaseRouter):
             body: UpdateVehicleRequest,
             response: Response,
             service: VehicleService = Depends(get_vehicle_service),
-            _: CurrentUser = Depends(require_roles("CLIENT", "WORKSHOP_OWNER")),
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.update(id, body, user_id)
@@ -83,7 +78,6 @@ class VehicleRouter(BaseRouter):
             id: UUID,
             response: Response,
             service: VehicleService = Depends(get_vehicle_service),
-            _: CurrentUser = Depends(require_roles("CLIENT", "WORKSHOP_OWNER")),
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.deactivate(id, user_id)
