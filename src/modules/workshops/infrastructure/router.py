@@ -95,6 +95,10 @@ class WorkshopRouter(BaseRouter):
             handle_service_result(result, response)
             return result
 
+        @self._router.get("/banks", response_model=CoreResponse[WorkshopBankListDTO])
+        async def list_banks():
+            return WorkshopService.get_banks()
+
         @self._router.get("/{id}", response_model=CoreResponse[WorkshopDTO])
         async def get_workshop(
             id: UUID,
@@ -162,10 +166,6 @@ class WorkshopRouter(BaseRouter):
             return result
 
         # -- Bank Accounts --
-
-        @self._router.get("/banks", response_model=CoreResponse[WorkshopBankListDTO])
-        async def list_banks():
-            return WorkshopService.get_banks()
 
         @self._router.post(
             "/{workshop_id}/bank-accounts",
