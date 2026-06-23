@@ -171,6 +171,8 @@ class PartPurchase(Base):
     part_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("parts.id"))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
+    vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id"))
+    mileage: Mapped[int] = mapped_column(Integer, default=0)
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     unit_price: Mapped[float] = mapped_column(Float)
     total_amount: Mapped[float] = mapped_column(Float)
@@ -218,6 +220,8 @@ class Order(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id"))
+    mileage: Mapped[int] = mapped_column(Integer, default=0)
     total_amount: Mapped[float] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String)  # PENDING, PAID, FINANCED, CANCELLED
     created_at: Mapped[datetime] = mapped_column(
@@ -226,6 +230,7 @@ class Order(Base):
 
     items = relationship("OrderItem", back_populates="order")
     installments = relationship("Installment", back_populates="order")
+    vehicle = relationship("Vehicle")
 
 
 class OrderItem(Base):
@@ -335,3 +340,52 @@ class Review(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class UserPaymentAccount(Base):
+    __tablename__ = "user_payment_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    account_type: Mapped[str] = mapped_column(String)  # BANK_TRANSFER, MOBILE_PAYMENT
+    bank_name: Mapped[str] = mapped_column(String)
+    account_number: Mapped[str] = mapped_column(String, nullable=True)
+    account_holder: Mapped[str] = mapped_column(String, nullable=True)
+    phone_number: Mapped[str] = mapped_column(String, nullable=True)
+    holder_document: Mapped[str] = mapped_column(String)
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class Cart(Base):
+    __tablename__ = "carts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    items = relationship(
+        "CartItem", back_populates="cart", cascade="all, delete-orphan"
+    )
+
+
+class CartItem(Base):
+    __tablename__ = "cart_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    cart_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("carts.id"))
+    part_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("parts.id"))
+    quantity: Mapped[int] = mapped_column(Integer)
+
+    cart = relationship("Cart", back_populates="items")
+    part = relationship("Part")

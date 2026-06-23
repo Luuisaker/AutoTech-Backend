@@ -12,6 +12,7 @@ from src.config.models import (
     WorkshopMobilePayment as WorkshopMobilePaymentModel,
     WorkshopService as WorkshopServiceModel,
     Part as PartModel,
+    UserPaymentAccount as UserPaymentAccountModel,
 )
 
 
@@ -340,6 +341,38 @@ async def seed() -> None:
         print(
             f"✓ {len(parts_verified)} repuestos (taller certificado) + {len(parts_unverified)} repuestos (taller no certificado) creados"
         )
+
+        # ── USER PAYMENT ACCOUNTS ────────────────────────────────
+
+        user_payment_accounts = [
+            UserPaymentAccountModel(
+                user_id=user1.id,
+                account_type="BANK_TRANSFER",
+                bank_name="Banesco",
+                account_number="01021234567890123456",
+                account_holder="Carlos Martínez",
+                holder_document="V-12345678",
+            ),
+            UserPaymentAccountModel(
+                user_id=user1.id,
+                account_type="MOBILE_PAYMENT",
+                bank_name="Mercantil Banco",
+                phone_number="04121234567",
+                holder_document="V-12345678",
+            ),
+            UserPaymentAccountModel(
+                user_id=user2.id,
+                account_type="BANK_TRANSFER",
+                bank_name="Banco de Venezuela",
+                account_number="01101234567890123456",
+                account_holder="María Rodríguez",
+                holder_document="V-23456789",
+            ),
+        ]
+        for a in user_payment_accounts:
+            session.add(a)
+        await session.flush()
+        print(f"✓ {len(user_payment_accounts)} métodos de pago de usuario creados")
 
         # ── DONE ────────────────────────────────────────────────
         await session.commit()

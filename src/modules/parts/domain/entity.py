@@ -22,6 +22,8 @@ class PartPurchase(Entity):
     part_id: UUID
     user_id: UUID
     workshop_id: UUID
+    vehicle_id: UUID
+    mileage: int = 0
     quantity: int = 1
     unit_price: float = 0.0
     total_amount: float = 0.0

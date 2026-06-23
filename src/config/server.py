@@ -14,6 +14,9 @@ from src.modules.vehicles.infrastructure.router import VehicleRouter
 from src.modules.workshops.infrastructure.router import WorkshopRouter
 from src.modules.parts.infrastructure.router import PartRouter
 from src.modules.services.infrastructure.router import ServiceRouter
+from src.modules.payments.infrastructure.router import PaymentRouter
+from src.modules.cart.infrastructure.router import CartRouter
+from src.modules.orders.infrastructure.router import OrderRouter
 
 routers = [
     UserRouter(),
@@ -21,6 +24,9 @@ routers = [
     WorkshopRouter(),
     PartRouter(),
     ServiceRouter(),
+    PaymentRouter(),
+    CartRouter(),
+    OrderRouter(),
 ]
 
 

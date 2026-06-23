@@ -26,11 +26,16 @@ from src.modules.parts.infrastructure.repository import (
     PartRepository,
     PartPurchaseRepository,
     PartPaymentRepository,
+    VehicleHistoryLogRepository,
 )
 from src.modules.workshops.infrastructure.repository import (
     WorkshopRepository,
 )
+from src.modules.vehicles.infrastructure.repository import (
+    VehicleRepository,
+)
 from src.config.models import PartPayment as PartPaymentModel
+from src.config.models import VehicleHistoryLog as VehicleHistoryLogModel
 
 
 class PartService:
@@ -256,8 +261,10 @@ class PartService:
         async with self._transaction(
             part=PartRepository,
             workshop=WorkshopRepository,
+            vehicle=VehicleRepository,
             purchase=PartPurchaseRepository,
             payment=PartPaymentRepository,
+            vehicle_history_log=VehicleHistoryLogRepository,
         ) as t:
             p_model = await t.part.get(str(dto.part_id))
 
@@ -280,6 +287,20 @@ class PartService:
                     status_code=400,
                     success=False,
                     message="Stock insuficiente",
+                )
+
+            v_model = await t.vehicle.get(str(dto.vehicle_id))
+            if not v_model:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Vehículo no encontrado",
+                )
+            if v_model.owner_id != user_id:
+                return Response(
+                    status_code=400,
+                    success=False,
+                    message="El vehículo no te pertenece",
                 )
 
             w_model = await t.workshop.get(str(p_model.workshop_id))
@@ -313,6 +334,8 @@ class PartService:
                 part_id=dto.part_id,
                 user_id=user_id,
                 workshop_id=p_model.workshop_id,
+                vehicle_id=dto.vehicle_id,
+                mileage=dto.mileage,
                 quantity=dto.quantity,
                 unit_price=p_model.price,
                 total_amount=total,
@@ -362,6 +385,17 @@ class PartService:
             # Decrease stock
             p_model.stock -= dto.quantity
             await t.part.update(p_model)
+
+            # Create VehicleHistoryLog for immediate full payment
+            if status == "PAID":
+                log_entry = VehicleHistoryLogModel(
+                    vehicle_id=dto.vehicle_id,
+                    workshop_id=p_model.workshop_id,
+                    log_date=datetime.now(timezone.utc),
+                    mileage=dto.mileage,
+                    description=f"Compra de {p_model.name} x{dto.quantity}",
+                )
+                await t.vehicle_history_log.add(log_entry)
 
         return Response(
             status_code=201,
@@ -444,6 +478,7 @@ class PartService:
         async with self._transaction(
             payment=PartPaymentRepository,
             purchase=PartPurchaseRepository,
+            vehicle_history_log=VehicleHistoryLogRepository,
         ) as t:
             payment_model = await t.payment.get(str(payment_id))
 
@@ -484,6 +519,16 @@ class PartService:
             if all(p.status == "PAID" for p in all_payments):
                 purchase_model.status = "PAID"
                 await t.purchase.update(purchase_model)
+
+                # Create VehicleHistoryLog entry
+                log_entry = VehicleHistoryLogModel(
+                    vehicle_id=purchase_model.vehicle_id,
+                    workshop_id=purchase_model.workshop_id,
+                    log_date=datetime.now(timezone.utc),
+                    mileage=purchase_model.mileage,
+                    description="Compra de repuesto completada",
+                )
+                await t.vehicle_history_log.add(log_entry)
 
         return Response(
             status_code=200,

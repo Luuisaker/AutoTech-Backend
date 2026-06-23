@@ -7,6 +7,7 @@ from src.core.infrastructure.sql_repository import GenericSQLRepository
 from src.config.models import Part as PartModel
 from src.config.models import PartPurchase as PartPurchaseModel
 from src.config.models import PartPayment as PartPaymentModel
+from src.config.models import VehicleHistoryLog as VehicleHistoryLogModel
 
 
 class PartRepository(GenericSQLRepository[PartModel]):
@@ -109,3 +110,8 @@ class PartPaymentRepository(GenericSQLRepository[PartPaymentModel]):
         stmt = select(PartPaymentModel).where(condition)
         r = await self._session.execute(stmt)
         return r.scalars().all()
+
+
+class VehicleHistoryLogRepository(GenericSQLRepository[VehicleHistoryLogModel]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, VehicleHistoryLogModel)

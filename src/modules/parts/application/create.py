@@ -60,8 +60,10 @@ class PartCategoryListDTO(BaseModel):
 
 
 class PurchasePartRequest(BaseModel):
-    part_id: UUID
+    part_id: UUID | None = None
+    vehicle_id: UUID
     quantity: int = Field(..., ge=1)
+    mileage: int = Field(..., ge=0)
     installment_count: int = Field(default=0, ge=0, le=24)
 
 
@@ -70,6 +72,8 @@ class PartPurchaseDTO(BaseModel):
     part_id: UUID
     user_id: UUID
     workshop_id: UUID
+    vehicle_id: UUID
+    mileage: int
     quantity: int
     unit_price: float
     total_amount: float
