@@ -114,12 +114,61 @@ class Part(Base):
     price: Mapped[float] = mapped_column(Float)
     stock: Mapped[int] = mapped_column(Integer, default=0)
     condition: Mapped[str] = mapped_column(String)  # NEW, USED
+    category: Mapped[str] = mapped_column(String, nullable=True)
     allows_installments: Mapped[int] = mapped_column(Integer, default=0)
+    installment_min_percentage: Mapped[float] = mapped_column(Float, default=0.0)
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     workshop = relationship("Workshop", back_populates="parts")
+    purchases = relationship("PartPurchase", back_populates="part")
+
+
+class PartPurchase(Base):
+    __tablename__ = "part_purchases"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    part_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("parts.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    unit_price: Mapped[float] = mapped_column(Float)
+    total_amount: Mapped[float] = mapped_column(Float)
+    down_payment: Mapped[float] = mapped_column(Float, default=0.0)
+    financed_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    installment_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(
+        String, default="PENDING"
+    )  # PENDING, PAID, FINANCED, CANCELLED
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    part = relationship("Part", back_populates="purchases")
+    payments = relationship(
+        "PartPayment", back_populates="purchase", cascade="all, delete-orphan"
+    )
+
+
+class PartPayment(Base):
+    __tablename__ = "part_payments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    purchase_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("part_purchases.id"))
+    amount: Mapped[float] = mapped_column(Float)
+    due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(
+        String, default="PENDING"
+    )  # PENDING, PAID, OVERDUE
+    paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    purchase = relationship("PartPurchase", back_populates="payments")
 
 
 class Order(Base):

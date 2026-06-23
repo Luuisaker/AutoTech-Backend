@@ -12,11 +12,13 @@ from src.utils.add_routers import add_routers
 from src.modules.users.infrastructure.router import UserRouter
 from src.modules.vehicles.infrastructure.router import VehicleRouter
 from src.modules.workshops.infrastructure.router import WorkshopRouter
+from src.modules.parts.infrastructure.router import PartRouter
 
 routers = [
     UserRouter(),
     VehicleRouter(),
     WorkshopRouter(),
+    PartRouter(),
 ]
 
 
