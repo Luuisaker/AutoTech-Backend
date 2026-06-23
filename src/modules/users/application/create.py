@@ -30,7 +30,7 @@ class CreateUserRequest(Request):
 class UserDTO(BaseModel):
     id: UUID
     email: EmailStr
-    role: str
+    roles: list[str]
     first_name: str
     last_name: str
     ci: str

@@ -17,6 +17,7 @@ from src.modules.workshops.application.create import (
 from src.modules.workshops.domain.entity import Workshop
 from src.modules.workshops.infrastructure.repository import WorkshopRepository
 from src.modules.users.infrastructure.repository import UserRepository
+from src.config.models import UserRole
 
 
 class WorkshopService:
@@ -201,8 +202,11 @@ class WorkshopService:
             w_model.is_certified = 1
 
             owner = await t.user.get(str(w_model.owner_id))
-            if owner and owner.role != "ADMIN":
-                owner.role = "WORKSHOP_OWNER"
+            if owner and "ADMIN" not in [ur.role for ur in owner.roles]:
+                if not any(ur.role == "WORKSHOP_OWNER" for ur in owner.roles):
+                    owner.roles.append(
+                        UserRole(role="WORKSHOP_OWNER", user_id=owner.id)
+                    )
                 await t.user.update(owner)
 
         return Response(

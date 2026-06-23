@@ -7,7 +7,7 @@ def require_roles(*roles: str):
     async def role_checker(
         current_user: CurrentUser = Depends(get_current_user),
     ) -> CurrentUser:
-        if current_user.role not in roles:
+        if not set(roles).intersection(current_user.roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="No tienes permisos para realizar esta acción",

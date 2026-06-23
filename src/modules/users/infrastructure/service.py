@@ -46,7 +46,7 @@ class UserService:
             user_entity = User(
                 email=dto.email,
                 password_hash=hashed_password,
-                role="CLIENT",
+                roles=["CLIENT"],
                 first_name=dto.first_name,
                 last_name=dto.last_name,
                 ci=dto.ci,
@@ -83,7 +83,8 @@ class UserService:
                 message="Credenciales inválidas",
             )
 
-        token = create_access_token(user_model.id, user_model.role)
+        roles = [ur.role for ur in user_model.roles]
+        token = create_access_token(user_model.id, roles)
 
         return Response(
             status_code=200,

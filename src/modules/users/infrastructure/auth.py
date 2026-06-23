@@ -16,12 +16,12 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
 
 class CurrentUser(BaseModel):
     id: UUID
-    role: str
+    roles: list[str]
 
 
-def create_access_token(user_id: UUID, role: str) -> str:
+def create_access_token(user_id: UUID, roles: list[str]) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {"sub": str(user_id), "role": role, "exp": expire}
+    payload = {"sub": str(user_id), "roles": roles, "exp": expire}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -39,7 +39,10 @@ async def get_current_user_id(token: str = Depends(oauth2_scheme)) -> UUID:
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
-        return CurrentUser(id=UUID(payload["sub"]), role=payload.get("role", "CLIENT"))
+        return CurrentUser(
+            id=UUID(payload["sub"]),
+            roles=payload.get("roles", ["CLIENT"]),
+        )
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, ValueError, KeyError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

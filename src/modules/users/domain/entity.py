@@ -6,7 +6,7 @@ from src.core.domain.entity import Entity
 class User(Entity):
     email: str
     password_hash: str
-    role: str
+    roles: list[str]
     first_name: str
     last_name: str
     ci: str

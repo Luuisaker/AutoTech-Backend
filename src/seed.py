@@ -2,7 +2,7 @@ import asyncio
 import bcrypt
 
 from src.config.database import session_factory
-from src.config.models import User as UserModel
+from src.config.models import User as UserModel, UserRole
 
 
 async def create_admin(
@@ -20,11 +20,11 @@ async def create_admin(
         admin = UserModel(
             email=email,
             password_hash=password_hash,
-            role="ADMIN",
             first_name=first_name,
             last_name=last_name,
             ci=ci,
             phone=phone,
+            roles=[UserRole(role="ADMIN")],
         )
         session.add(admin)
         await session.commit()

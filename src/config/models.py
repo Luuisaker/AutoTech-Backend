@@ -15,9 +15,6 @@ class User(Base):
     )
     email: Mapped[str] = mapped_column(String, unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String)
-    role: Mapped[str] = mapped_column(
-        String, default="CLIENT"
-    )  # CLIENT, WORKSHOP_OWNER, ADMIN
     first_name: Mapped[str] = mapped_column(String)
     last_name: Mapped[str] = mapped_column(String)
     ci: Mapped[str] = mapped_column(String, unique=True)
@@ -26,8 +23,23 @@ class User(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    roles: Mapped[list["UserRole"]] = relationship(
+        "UserRole", back_populates="user", cascade="all, delete-orphan", lazy="joined"
+    )
     vehicles = relationship("Vehicle", back_populates="owner")
     workshops = relationship("Workshop", back_populates="owner")
+
+
+class UserRole(Base):
+    __tablename__ = "user_roles"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    role: Mapped[str] = mapped_column(String)  # CLIENT, WORKSHOP_OWNER, ADMIN
+
+    user = relationship("User", back_populates="roles")
 
 
 class Vehicle(Base):
