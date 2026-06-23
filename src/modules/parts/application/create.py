@@ -91,6 +91,8 @@ class PartPaymentDTO(BaseModel):
     purchase_id: UUID
     amount: float
     due_date: datetime
+    payment_method: str
+    reference_number: str | None
     status: str
     paid_at: datetime | None
 
@@ -99,3 +101,8 @@ class PartPaymentDTO(BaseModel):
 
 class PartPaymentListDTO(BaseModel):
     payments: list[PartPaymentDTO]
+
+
+class RecordPaymentRequest(BaseModel):
+    payment_method: str = Field(..., pattern="BANK_TRANSFER|MOBILE_PAYMENT|CASH|OTHER")
+    reference_number: str | None = Field(default=None, max_length=100)

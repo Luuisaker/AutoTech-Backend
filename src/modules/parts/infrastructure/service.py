@@ -11,6 +11,7 @@ from src.modules.parts.application.create import (
     CreatePartRequest,
     UpdatePartRequest,
     PurchasePartRequest,
+    RecordPaymentRequest,
     PartDTO,
     PartListDTO,
     PartCategoryListDTO,
@@ -26,7 +27,9 @@ from src.modules.parts.infrastructure.repository import (
     PartPurchaseRepository,
     PartPaymentRepository,
 )
-from src.modules.workshops.infrastructure.repository import WorkshopRepository
+from src.modules.workshops.infrastructure.repository import (
+    WorkshopRepository,
+)
 from src.config.models import PartPayment as PartPaymentModel
 
 
@@ -432,6 +435,89 @@ class PartService:
             success=True,
             content=PartPaymentListDTO(
                 payments=[PartPaymentDTO.model_validate(p) for p in payments]
+            ),
+        )
+
+    async def record_payment(
+        self, payment_id: UUID, user_id: UUID, dto: RecordPaymentRequest
+    ) -> Response:
+        async with self._transaction(
+            payment=PartPaymentRepository,
+            purchase=PartPurchaseRepository,
+        ) as t:
+            payment_model = await t.payment.get(str(payment_id))
+
+            if not payment_model:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Pago no encontrado",
+                )
+
+            purchase_model = await t.purchase.get(str(payment_model.purchase_id))
+
+            if not purchase_model or purchase_model.user_id != user_id:
+                return Response(
+                    status_code=403,
+                    success=False,
+                    message="No tienes acceso a este pago",
+                )
+
+            if payment_model.status == "PAID":
+                return Response(
+                    status_code=400,
+                    success=False,
+                    message="Este pago ya fue realizado",
+                )
+
+            payment_model.payment_method = dto.payment_method
+            payment_model.reference_number = dto.reference_number
+            payment_model.status = "PAID"
+            payment_model.paid_at = datetime.now(timezone.utc)
+
+            payment_model = await t.payment.update(payment_model)
+
+            # Check if all payments are PAID -> mark purchase as PAID
+            all_payments = await t.payment.list_by_purchase(
+                str(payment_model.purchase_id)
+            )
+            if all(p.status == "PAID" for p in all_payments):
+                purchase_model.status = "PAID"
+                await t.purchase.update(purchase_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Pago registrado exitosamente",
+            content=PartPaymentDTO.model_validate(payment_model),
+        )
+
+    async def list_workshop_sales(
+        self, workshop_id: UUID, user_id: UUID, offset: int = 0, limit: int = 100
+    ) -> Response:
+        async with self._transaction(
+            workshop=WorkshopRepository, purchase=PartPurchaseRepository
+        ) as t:
+            w_model = await t.workshop.get(str(workshop_id))
+            if not w_model or w_model.owner_id != user_id:
+                return Response(
+                    status_code=403,
+                    success=False,
+                    message="No eres el dueño de este taller",
+                )
+
+            purchases = await t.purchase.list_by_workshop(
+                str(workshop_id), offset, limit
+            )
+
+        return Response(
+            status_code=200,
+            success=True,
+            content=PartPurchaseListDTO(
+                purchases=[
+                    PartPurchaseDTO.model_validate(self.__purchase_mapper.to_entity(p))
+                    for p in purchases
+                ]
             ),
         )
 

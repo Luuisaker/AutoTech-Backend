@@ -6,6 +6,12 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from src.core.infrastructure.sql_repository import GenericSQLRepository
 from src.config.models import Workshop as WorkshopModel
+from src.config.models import (
+    WorkshopBankAccount as WorkshopBankAccountModel,
+)
+from src.config.models import (
+    WorkshopMobilePayment as WorkshopMobilePaymentModel,
+)
 
 
 class WorkshopRepository(GenericSQLRepository[WorkshopModel]):
@@ -65,5 +71,36 @@ class WorkshopRepository(GenericSQLRepository[WorkshopModel]):
             .options(selectinload(WorkshopModel.owner))
             .order_by(WorkshopModel.created_at.desc())
         )
+        r = await self._session.execute(stmt)
+        return r.scalars().all()
+
+
+class WorkshopBankAccountRepository(GenericSQLRepository[WorkshopBankAccountModel]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, WorkshopBankAccountModel)
+
+    async def list_by_workshop(
+        self, workshop_id: str
+    ) -> Sequence[WorkshopBankAccountModel]:
+        condition = cast(
+            ColumnElement[bool], WorkshopBankAccountModel.workshop_id == workshop_id
+        )
+        stmt = select(WorkshopBankAccountModel).where(condition)
+        r = await self._session.execute(stmt)
+        return r.scalars().all()
+
+
+class WorkshopMobilePaymentRepository(GenericSQLRepository[WorkshopMobilePaymentModel]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, WorkshopMobilePaymentModel)
+
+    async def list_by_workshop(
+        self, workshop_id: str
+    ) -> Sequence[WorkshopMobilePaymentModel]:
+        condition = cast(
+            ColumnElement[bool],
+            WorkshopMobilePaymentModel.workshop_id == workshop_id,
+        )
+        stmt = select(WorkshopMobilePaymentModel).where(condition)
         r = await self._session.execute(stmt)
         return r.scalars().all()

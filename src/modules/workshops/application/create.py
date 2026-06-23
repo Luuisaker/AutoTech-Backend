@@ -60,3 +60,63 @@ class VerificationRequestDTO(BaseModel):
 
 class VerificationRequestListDTO(BaseModel):
     requests: list[VerificationRequestDTO]
+
+
+class CreateBankAccountRequest(BaseModel):
+    account_number: str = Field(..., min_length=10, max_length=30)
+    holder_ci: str = Field(..., min_length=5, max_length=15)
+    bank_name: str = Field(...)
+
+
+class UpdateBankAccountRequest(BaseModel):
+    account_number: str | None = Field(default=None, min_length=10, max_length=30)
+    holder_ci: str | None = Field(default=None, min_length=5, max_length=15)
+    bank_name: str | None = None
+    is_active: int | None = Field(default=None, ge=0, le=1)
+
+
+class BankAccountDTO(BaseModel):
+    id: UUID
+    workshop_id: UUID
+    account_number: str
+    holder_ci: str
+    bank_name: str
+    is_active: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BankAccountListDTO(BaseModel):
+    accounts: list[BankAccountDTO]
+
+
+class CreateMobilePaymentRequest(BaseModel):
+    phone_number: str = Field(..., min_length=7, max_length=15)
+    bank_name: str = Field(...)
+    holder_ci: str = Field(..., min_length=5, max_length=15)
+
+
+class UpdateMobilePaymentRequest(BaseModel):
+    phone_number: str | None = Field(default=None, min_length=7, max_length=15)
+    bank_name: str | None = None
+    holder_ci: str | None = Field(default=None, min_length=5, max_length=15)
+    is_active: int | None = Field(default=None, ge=0, le=1)
+
+
+class MobilePaymentDTO(BaseModel):
+    id: UUID
+    workshop_id: UUID
+    phone_number: str
+    bank_name: str
+    holder_ci: str
+    is_active: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MobilePaymentListDTO(BaseModel):
+    payments: list[MobilePaymentDTO]
+
+
+class WorkshopBankListDTO(BaseModel):
+    banks: list[str]

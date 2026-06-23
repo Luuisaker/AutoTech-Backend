@@ -13,11 +13,13 @@ from src.modules.parts.application.create import (
     CreatePartRequest,
     UpdatePartRequest,
     PurchasePartRequest,
+    RecordPaymentRequest,
     PartDTO,
     PartListDTO,
     PartCategoryListDTO,
     PartPurchaseDTO,
     PartPurchaseListDTO,
+    PartPaymentDTO,
     PartPaymentListDTO,
 )
 
@@ -168,5 +170,38 @@ class PartRouter(BaseRouter):
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.get_purchase_payments(purchase_id, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/payments/{payment_id}/pay",
+            response_model=CoreResponse[PartPaymentDTO],
+        )
+        async def pay_payment(
+            payment_id: UUID,
+            body: RecordPaymentRequest,
+            response: Response,
+            service: PartService = Depends(get_part_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.record_payment(payment_id, user_id, body)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.get(
+            "/workshop/{workshop_id}/sales",
+            response_model=CoreResponse[PartPurchaseListDTO],
+        )
+        async def workshop_sales(
+            workshop_id: UUID,
+            response: Response,
+            offset: int = Query(default=0, ge=0),
+            limit: int = Query(default=100, ge=1, le=200),
+            service: PartService = Depends(get_part_service),
+            current_user: tuple = Depends(require_workshop_owner),
+        ):
+            result = await service.list_workshop_sales(
+                workshop_id, current_user.id, offset, limit
+            )
             handle_service_result(result, response)
             return result

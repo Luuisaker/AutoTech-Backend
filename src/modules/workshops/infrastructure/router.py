@@ -7,7 +7,10 @@ from src.modules.workshops.infrastructure.service import (
     get_workshop_service,
 )
 from src.modules.users.infrastructure.auth import get_current_user_id, CurrentUser
-from src.modules.users.infrastructure.permissions import require_admin
+from src.modules.users.infrastructure.permissions import (
+    require_admin,
+    require_workshop_owner,
+)
 from src.utils.handle_service_result import handle_service_result
 from src.utils.file_upload import save_upload_file
 from src.modules.workshops.application.create import (
@@ -16,6 +19,15 @@ from src.modules.workshops.application.create import (
     WorkshopDTO,
     WorkshopListDTO,
     VerificationRequestListDTO,
+    CreateBankAccountRequest,
+    UpdateBankAccountRequest,
+    BankAccountDTO,
+    BankAccountListDTO,
+    CreateMobilePaymentRequest,
+    UpdateMobilePaymentRequest,
+    MobilePaymentDTO,
+    MobilePaymentListDTO,
+    WorkshopBankListDTO,
 )
 
 
@@ -146,5 +158,145 @@ class WorkshopRouter(BaseRouter):
             _: CurrentUser = Depends(require_admin),
         ):
             result = await service.certify(id)
+            handle_service_result(result, response)
+            return result
+
+        # -- Bank Accounts --
+
+        @self._router.get("/banks", response_model=CoreResponse[WorkshopBankListDTO])
+        async def list_banks():
+            return WorkshopService.get_banks()
+
+        @self._router.post(
+            "/{workshop_id}/bank-accounts",
+            response_model=CoreResponse[BankAccountDTO],
+            status_code=201,
+        )
+        async def create_bank_account(
+            workshop_id: UUID,
+            body: CreateBankAccountRequest,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.create_bank_account(
+                workshop_id, body, current_user.id
+            )
+            handle_service_result(result, response)
+            return result
+
+        @self._router.get(
+            "/{workshop_id}/bank-accounts",
+            response_model=CoreResponse[BankAccountListDTO],
+        )
+        async def list_bank_accounts(
+            workshop_id: UUID,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+        ):
+            result = await service.list_bank_accounts(workshop_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.put(
+            "/{workshop_id}/bank-accounts/{account_id}",
+            response_model=CoreResponse[BankAccountDTO],
+        )
+        async def update_bank_account(
+            workshop_id: UUID,
+            account_id: UUID,
+            body: UpdateBankAccountRequest,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.update_bank_account(
+                account_id, workshop_id, body, current_user.id
+            )
+            handle_service_result(result, response)
+            return result
+
+        @self._router.delete(
+            "/{workshop_id}/bank-accounts/{account_id}",
+            response_model=CoreResponse,
+        )
+        async def delete_bank_account(
+            workshop_id: UUID,
+            account_id: UUID,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.delete_bank_account(
+                account_id, workshop_id, current_user.id
+            )
+            handle_service_result(result, response)
+            return result
+
+        # -- Mobile Payments --
+
+        @self._router.post(
+            "/{workshop_id}/mobile-payments",
+            response_model=CoreResponse[MobilePaymentDTO],
+            status_code=201,
+        )
+        async def create_mobile_payment(
+            workshop_id: UUID,
+            body: CreateMobilePaymentRequest,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.create_mobile_payment(
+                workshop_id, body, current_user.id
+            )
+            handle_service_result(result, response)
+            return result
+
+        @self._router.get(
+            "/{workshop_id}/mobile-payments",
+            response_model=CoreResponse[MobilePaymentListDTO],
+        )
+        async def list_mobile_payments(
+            workshop_id: UUID,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+        ):
+            result = await service.list_mobile_payments(workshop_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.put(
+            "/{workshop_id}/mobile-payments/{payment_id}",
+            response_model=CoreResponse[MobilePaymentDTO],
+        )
+        async def update_mobile_payment(
+            workshop_id: UUID,
+            payment_id: UUID,
+            body: UpdateMobilePaymentRequest,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.update_mobile_payment(
+                payment_id, workshop_id, body, current_user.id
+            )
+            handle_service_result(result, response)
+            return result
+
+        @self._router.delete(
+            "/{workshop_id}/mobile-payments/{payment_id}",
+            response_model=CoreResponse,
+        )
+        async def delete_mobile_payment(
+            workshop_id: UUID,
+            payment_id: UUID,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.delete_mobile_payment(
+                payment_id, workshop_id, current_user.id
+            )
             handle_service_result(result, response)
             return result

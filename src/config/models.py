@@ -86,6 +86,42 @@ class Workshop(Base):
     owner = relationship("User", back_populates="workshops")
     services = relationship("WorkshopService", back_populates="workshop")
     parts = relationship("Part", back_populates="workshop")
+    bank_accounts = relationship(
+        "WorkshopBankAccount", back_populates="workshop", cascade="all, delete-orphan"
+    )
+    mobile_payments = relationship(
+        "WorkshopMobilePayment", back_populates="workshop", cascade="all, delete-orphan"
+    )
+
+
+class WorkshopBankAccount(Base):
+    __tablename__ = "workshop_bank_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
+    account_number: Mapped[str] = mapped_column(String)
+    holder_ci: Mapped[str] = mapped_column(String)
+    bank_name: Mapped[str] = mapped_column(String)
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
+
+    workshop = relationship("Workshop", back_populates="bank_accounts")
+
+
+class WorkshopMobilePayment(Base):
+    __tablename__ = "workshop_mobile_payments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
+    phone_number: Mapped[str] = mapped_column(String)
+    bank_name: Mapped[str] = mapped_column(String)
+    holder_ci: Mapped[str] = mapped_column(String)
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
+
+    workshop = relationship("Workshop", back_populates="mobile_payments")
 
 
 class WorkshopService(Base):
@@ -163,6 +199,10 @@ class PartPayment(Base):
     purchase_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("part_purchases.id"))
     amount: Mapped[float] = mapped_column(Float)
     due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payment_method: Mapped[str] = mapped_column(
+        String, default="OTHER"
+    )  # BANK_TRANSFER, MOBILE_PAYMENT, CASH, OTHER
+    reference_number: Mapped[str] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(
         String, default="PENDING"
     )  # PENDING, PAID, OVERDUE
