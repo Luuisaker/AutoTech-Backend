@@ -74,6 +74,7 @@ class Workshop(Base):
     name: Mapped[str] = mapped_column(String)
     rif: Mapped[str] = mapped_column(String, unique=True)
     verification_document_url: Mapped[str] = mapped_column(String, nullable=True)
+    photo_url: Mapped[str] = mapped_column(String, nullable=True)
     address: Mapped[str] = mapped_column(Text)
     latitude: Mapped[float] = mapped_column(Float, nullable=True)
     longitude: Mapped[float] = mapped_column(Float, nullable=True)
@@ -153,6 +154,7 @@ class Part(Base):
     category: Mapped[str] = mapped_column(String, nullable=True)
     allows_installments: Mapped[int] = mapped_column(Integer, default=0)
     installment_min_percentage: Mapped[float] = mapped_column(Float, default=0.0)
+    photo_url: Mapped[str] = mapped_column(String, nullable=True)
     is_active: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

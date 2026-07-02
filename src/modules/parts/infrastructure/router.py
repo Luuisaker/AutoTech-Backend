@@ -1,5 +1,5 @@
 from uuid import UUID
-from fastapi import Depends, APIRouter, Response, Query
+from fastapi import Depends, APIRouter, Response, Query, File, UploadFile
 from src.core.infrastructure.router import BaseRouter
 from src.core.application.base_response import Response as CoreResponse
 from src.modules.parts.infrastructure.service import (
@@ -9,6 +9,7 @@ from src.modules.parts.infrastructure.service import (
 from src.modules.users.infrastructure.auth import get_current_user_id
 from src.modules.users.infrastructure.permissions import require_workshop_owner
 from src.utils.handle_service_result import handle_service_result
+from src.utils.file_upload import save_upload_file
 from src.modules.parts.application.create import (
     CreatePartRequest,
     UpdatePartRequest,
@@ -125,6 +126,19 @@ class PartRouter(BaseRouter):
             current_user: tuple = Depends(require_workshop_owner),
         ):
             result = await service.deactivate(id, current_user.id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post("/{id}/photo", response_model=CoreResponse[PartDTO])
+        async def upload_part_photo(
+            id: UUID,
+            response: Response,
+            photo: UploadFile = File(...),
+            service: PartService = Depends(get_part_service),
+            current_user: tuple = Depends(require_workshop_owner),
+        ):
+            photo_url = await save_upload_file(photo, "part_photos")
+            result = await service.upload_photo(id, current_user.id, photo_url)
             handle_service_result(result, response)
             return result
 

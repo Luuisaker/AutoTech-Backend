@@ -17,6 +17,7 @@ class PartMapper(GenericMapper[Part, PartModel]):
             category=model.category,
             allows_installments=model.allows_installments,
             installment_min_percentage=model.installment_min_percentage,
+            photo_url=model.photo_url,
             is_active=model.is_active,
             created_at=model.created_at,
         )
@@ -33,6 +34,7 @@ class PartMapper(GenericMapper[Part, PartModel]):
             category=entity.category,
             allows_installments=entity.allows_installments,
             installment_min_percentage=entity.installment_min_percentage,
+            photo_url=entity.photo_url,
             is_active=entity.is_active,
             created_at=entity.created_at,
         )

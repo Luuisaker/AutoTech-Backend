@@ -8,6 +8,7 @@ from src.modules.users.infrastructure.auth import get_current_user_id
 from src.utils.handle_service_result import handle_service_result
 from src.modules.users.application.create import CreateUserRequest, UserDTO
 from src.modules.users.application.login import LoginRequest, TokenResponse
+from src.modules.users.application.update import UpdateUserRequest, ChangePasswordRequest
 
 
 class UserRouter(BaseRouter):
@@ -62,5 +63,27 @@ class UserRouter(BaseRouter):
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.get_me(user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.put("/me", response_model=CoreResponse[UserDTO])
+        async def update_me(
+            body: UpdateUserRequest,
+            response: Response,
+            service: UserService = Depends(get_user_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.update(user_id, body)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post("/me/change-password", response_model=CoreResponse)
+        async def change_password(
+            body: ChangePasswordRequest,
+            response: Response,
+            service: UserService = Depends(get_user_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.change_password(user_id, body)
             handle_service_result(result, response)
             return result

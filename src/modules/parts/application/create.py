@@ -17,6 +17,7 @@ class CreatePartRequest(BaseModel):
     )
     allows_installments: int = Field(default=0, ge=0, le=1)
     installment_min_percentage: float = Field(default=0.0, ge=0.0, le=100.0)
+    photo_url: str | None = Field(default=None, max_length=512)
 
 
 class UpdatePartRequest(BaseModel):
@@ -31,6 +32,7 @@ class UpdatePartRequest(BaseModel):
     )
     allows_installments: int | None = Field(default=None, ge=0, le=1)
     installment_min_percentage: float | None = Field(default=None, ge=0.0, le=100.0)
+    photo_url: str | None = Field(default=None, max_length=512)
     is_active: int | None = Field(default=None, ge=0, le=1)
 
 
@@ -45,6 +47,7 @@ class PartDTO(BaseModel):
     category: str | None
     allows_installments: int
     installment_min_percentage: float
+    photo_url: str | None
     is_active: int
     created_at: datetime
 

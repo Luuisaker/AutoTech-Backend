@@ -10,6 +10,7 @@ from src.core.application.base_response import Response
 from src.modules.users.infrastructure.mapper import UserMapper
 from src.modules.users.application.create import CreateUserRequest, UserDTO
 from src.modules.users.application.login import LoginRequest, TokenResponse
+from src.modules.users.application.update import UpdateUserRequest, ChangePasswordRequest
 from src.modules.users.domain.entity import User
 from src.modules.users.infrastructure.auth import create_access_token
 from src.modules.users.infrastructure.repository import UserRepository
@@ -46,7 +47,7 @@ class UserService:
             user_entity = User(
                 email=dto.email,
                 password_hash=hashed_password,
-                roles=["CLIENT"],
+                roles=[dto.role.value],
                 first_name=dto.first_name,
                 last_name=dto.last_name,
                 ci=dto.ci,
@@ -108,6 +109,65 @@ class UserService:
             status_code=200,
             success=True,
             content=UserDTO.model_validate(self.__mapper.to_entity(user_model)),
+        )
+
+    async def update(self, user_id: UUID, dto: UpdateUserRequest) -> Response:
+        async with self._transaction(user=UserRepository) as t:
+            user_model = await t.user.get(str(user_id))
+            if not user_model:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Usuario no encontrado",
+                )
+
+            if dto.first_name is not None:
+                user_model.first_name = dto.first_name
+            if dto.last_name is not None:
+                user_model.last_name = dto.last_name
+            if dto.phone is not None:
+                user_model.phone = dto.phone
+
+            user_model = await t.user.update(user_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Usuario actualizado exitosamente",
+            content=UserDTO.model_validate(self.__mapper.to_entity(user_model)),
+        )
+
+    async def change_password(
+        self, user_id: UUID, dto: ChangePasswordRequest
+    ) -> Response:
+        async with self._transaction(user=UserRepository) as t:
+            user_model = await t.user.get(str(user_id))
+            if not user_model:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Usuario no encontrado",
+                )
+
+            if not bcrypt.checkpw(
+                dto.current_password.encode("utf-8"),
+                user_model.password_hash.encode("utf-8"),
+            ):
+                return Response(
+                    status_code=401,
+                    success=False,
+                    message="Contraseña actual incorrecta",
+                )
+
+            password_bytes = dto.new_password.encode("utf-8")
+            salt = bcrypt.gensalt()
+            user_model.password_hash = bcrypt.hashpw(password_bytes, salt).decode("utf-8")
+            await t.user.update(user_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Contraseña actualizada exitosamente",
         )
 
 

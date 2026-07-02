@@ -49,7 +49,8 @@ class WorkshopRouter(BaseRouter):
             address: str = Form(...),
             latitude: float | None = Form(None),
             longitude: float | None = Form(None),
-            verification_document: UploadFile = File(...),
+            verification_document: UploadFile | None = File(None),
+            photo: UploadFile | None = File(None),
             service: WorkshopService = Depends(get_workshop_service),
             user_id: UUID = Depends(get_current_user_id),
         ):
@@ -60,10 +61,15 @@ class WorkshopRouter(BaseRouter):
                 latitude=latitude,
                 longitude=longitude,
             )
-            doc_url = await save_upload_file(
-                verification_document, "verification_documents"
-            )
-            result = await service.create(body, user_id, doc_url)
+            doc_url = None
+            if verification_document:
+                doc_url = await save_upload_file(
+                    verification_document, "verification_documents"
+                )
+            photo_url = None
+            if photo:
+                photo_url = await save_upload_file(photo, "workshop_photos")
+            result = await service.create(body, user_id, doc_url, photo_url)
             handle_service_result(result, response)
             return result
 
@@ -73,11 +79,17 @@ class WorkshopRouter(BaseRouter):
             service: WorkshopService = Depends(get_workshop_service),
             query: str | None = None,
             certified_only: bool = False,
+            owned: bool = False,
             offset: int = 0,
             limit: int = 100,
+            user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.list(
-                query=query, certified_only=certified_only, offset=offset, limit=limit
+                query=query,
+                certified_only=certified_only,
+                owner_id=user_id if owned else None,
+                offset=offset,
+                limit=limit,
             )
             handle_service_result(result, response)
             return result
@@ -118,6 +130,7 @@ class WorkshopRouter(BaseRouter):
             latitude: float | None = Form(None),
             longitude: float | None = Form(None),
             verification_document: UploadFile | None = File(None),
+            photo: UploadFile | None = File(None),
             service: WorkshopService = Depends(get_workshop_service),
             user_id: UUID = Depends(get_current_user_id),
         ):
@@ -132,7 +145,34 @@ class WorkshopRouter(BaseRouter):
                 doc_url = await save_upload_file(
                     verification_document, "verification_documents"
                 )
-            result = await service.update(id, body, user_id, doc_url)
+            photo_url = None
+            if photo:
+                photo_url = await save_upload_file(photo, "workshop_photos")
+            result = await service.update(id, body, user_id, doc_url, photo_url)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.delete("/{id}", response_model=CoreResponse)
+        async def delete_workshop(
+            id: UUID,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.delete(id, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post("/{id}/photo", response_model=CoreResponse[WorkshopDTO])
+        async def upload_workshop_photo(
+            id: UUID,
+            response: Response,
+            photo: UploadFile = File(...),
+            service: WorkshopService = Depends(get_workshop_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            photo_url = await save_upload_file(photo, "workshop_photos")
+            result = await service.upload_photo(id, user_id, photo_url)
             handle_service_result(result, response)
             return result
 

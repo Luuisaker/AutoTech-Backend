@@ -53,9 +53,13 @@ class WorkshopService:
         self._transaction = transaction
 
     async def create(
-        self, dto: CreateWorkshopRequest, owner_id: UUID, verification_document_url: str
+        self,
+        dto: CreateWorkshopRequest,
+        owner_id: UUID,
+        verification_document_url: str | None,
+        photo_url: str | None,
     ) -> Response:
-        async with self._transaction(workshop=WorkshopRepository) as t:
+        async with self._transaction(workshop=WorkshopRepository, user=UserRepository) as t:
             if await t.workshop.get_by_rif(dto.rif):
                 return Response(
                     status_code=400,
@@ -71,9 +75,16 @@ class WorkshopService:
                 latitude=dto.latitude,
                 longitude=dto.longitude,
                 verification_document_url=verification_document_url,
+                photo_url=photo_url,
             )
 
             w_model = await t.workshop.add(self.__mapper.to_model(workshop_entity))
+
+            owner = await t.user.get(str(owner_id))
+            if owner and "ADMIN" not in [ur.role for ur in owner.roles]:
+                if not any(ur.role == "WORKSHOP_OWNER" for ur in owner.roles):
+                    owner.roles.append(UserRole(role="WORKSHOP_OWNER", user_id=owner.id))
+                    await t.user.update(owner)
 
         return Response(
             status_code=201,
@@ -86,12 +97,17 @@ class WorkshopService:
         self,
         query: str | None = None,
         certified_only: bool = False,
+        owner_id: UUID | None = None,
         offset: int = 0,
         limit: int = 100,
     ) -> Response:
         async with self._transaction(workshop=WorkshopRepository) as t:
             workshops = await t.workshop.search(
-                query=query, certified_only=certified_only, offset=offset, limit=limit
+                query=query,
+                certified_only=certified_only,
+                owner_id=str(owner_id) if owner_id else None,
+                offset=offset,
+                limit=limit,
             )
 
         return Response(
@@ -154,6 +170,7 @@ class WorkshopService:
         dto: UpdateWorkshopRequest,
         owner_id: UUID,
         verification_document_url: str | None = None,
+        photo_url: str | None = None,
     ) -> Response:
         async with self._transaction(workshop=WorkshopRepository) as t:
             w_model = await t.workshop.get(str(workshop_id))
@@ -182,6 +199,8 @@ class WorkshopService:
             w_model.longitude = dto.longitude
         if verification_document_url is not None:
             w_model.verification_document_url = verification_document_url
+        if photo_url is not None:
+            w_model.photo_url = photo_url
 
         async with self._transaction(workshop=WorkshopRepository) as t:
             w_model = await t.workshop.update(w_model)
@@ -190,6 +209,65 @@ class WorkshopService:
             status_code=200,
             success=True,
             message="Taller actualizado exitosamente",
+            content=WorkshopDTO.model_validate(self.__mapper.to_entity(w_model)),
+        )
+
+    async def delete(self, workshop_id: UUID, owner_id: UUID) -> Response:
+        async with self._transaction(workshop=WorkshopRepository) as t:
+            w_model = await t.workshop.get(str(workshop_id))
+
+        if not w_model:
+            return Response(
+                status_code=404,
+                success=False,
+                message="Taller no encontrado",
+            )
+
+        if w_model.owner_id != owner_id:
+            return Response(
+                status_code=403,
+                success=False,
+                message="No eres el dueño de este taller",
+            )
+
+        async with self._transaction(workshop=WorkshopRepository) as t:
+            await t.workshop.delete(w_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Taller eliminado exitosamente",
+        )
+
+    async def upload_photo(
+        self, workshop_id: UUID, owner_id: UUID, photo_url: str
+    ) -> Response:
+        async with self._transaction(workshop=WorkshopRepository) as t:
+            w_model = await t.workshop.get(str(workshop_id))
+
+        if not w_model:
+            return Response(
+                status_code=404,
+                success=False,
+                message="Taller no encontrado",
+            )
+
+        if w_model.owner_id != owner_id:
+            return Response(
+                status_code=403,
+                success=False,
+                message="No eres el dueño de este taller",
+            )
+
+        w_model.photo_url = photo_url
+
+        async with self._transaction(workshop=WorkshopRepository) as t:
+            w_model = await t.workshop.update(w_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Foto del taller actualizada",
             content=WorkshopDTO.model_validate(self.__mapper.to_entity(w_model)),
         )
 

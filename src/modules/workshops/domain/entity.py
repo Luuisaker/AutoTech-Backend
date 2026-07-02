@@ -14,6 +14,7 @@ class Workshop(Entity):
     is_certified: int = 0
     average_rating: float = 0.0
     verification_document_url: str | None = None
+    photo_url: str | None = None
 
 
 @dataclass

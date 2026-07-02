@@ -36,6 +36,7 @@ class WorkshopDTO(BaseModel):
     is_certified: int
     average_rating: float
     verification_document_url: str | None
+    photo_url: str | None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

@@ -14,6 +14,7 @@ class Part(Entity):
     category: str | None = None
     allows_installments: int = 0
     installment_min_percentage: float = 0.0
+    photo_url: str | None = None
     is_active: int = 1
 
 

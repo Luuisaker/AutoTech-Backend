@@ -26,6 +26,7 @@ class WorkshopMapper(GenericMapper[Workshop, WorkshopModel]):
             is_certified=model.is_certified,
             average_rating=model.average_rating,
             verification_document_url=model.verification_document_url,
+            photo_url=model.photo_url,
             created_at=model.created_at,
         )
 
@@ -41,6 +42,7 @@ class WorkshopMapper(GenericMapper[Workshop, WorkshopModel]):
             is_certified=entity.is_certified,
             average_rating=entity.average_rating,
             verification_document_url=entity.verification_document_url,
+            photo_url=entity.photo_url,
             created_at=entity.created_at,
         )
 

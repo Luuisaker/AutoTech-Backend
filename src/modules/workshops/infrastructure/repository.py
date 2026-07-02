@@ -34,9 +34,13 @@ class WorkshopRepository(GenericSQLRepository[WorkshopModel]):
         self,
         query: str | None = None,
         certified_only: bool = False,
+        owner_id: str | None = None,
         offset: int = 0,
         limit: int = 100,
     ) -> Sequence[WorkshopModel]:
+        if owner_id:
+            return await self.list_by_owner(owner_id)
+
         stmt = select(WorkshopModel)
         where_clauses: list = []
 

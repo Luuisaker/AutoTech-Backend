@@ -98,6 +98,7 @@ class PartService:
             category=dto.category,
             allows_installments=dto.allows_installments,
             installment_min_percentage=dto.installment_min_percentage,
+            photo_url=dto.photo_url,
         )
 
         async with self._transaction(part=PartRepository) as t:
@@ -217,6 +218,8 @@ class PartService:
                 p_model.installment_min_percentage = dto.installment_min_percentage
             if dto.is_active is not None:
                 p_model.is_active = dto.is_active
+            if dto.photo_url is not None:
+                p_model.photo_url = dto.photo_url
 
             p_model = await t.part.update(p_model)
 
@@ -404,6 +407,39 @@ class PartService:
             content=PartPurchaseDTO.model_validate(
                 self.__purchase_mapper.to_entity(purchase_model)
             ),
+        )
+
+    async def upload_photo(
+        self, part_id: UUID, user_id: UUID, photo_url: str
+    ) -> Response:
+        async with self._transaction(
+            part=PartRepository, workshop=WorkshopRepository
+        ) as t:
+            p_model = await t.part.get(str(part_id))
+
+            if not p_model:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Producto no encontrado",
+                )
+
+            w_model = await t.workshop.get(str(p_model.workshop_id))
+            if not w_model or w_model.owner_id != user_id:
+                return Response(
+                    status_code=403,
+                    success=False,
+                    message="No eres el dueño de este taller",
+                )
+
+            p_model.photo_url = photo_url
+            p_model = await t.part.update(p_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Foto del producto actualizada",
+            content=PartDTO.model_validate(self.__mapper.to_entity(p_model)),
         )
 
     async def list_purchases_by_user(
