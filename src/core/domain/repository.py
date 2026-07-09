@@ -20,3 +20,7 @@ class GenericRepository(Generic[T], ABC):
     @abstractmethod
     async def update(self, record: T) -> T:
         raise NotImplementedError
+
+    @abstractmethod
+    async def delete(self, record: T) -> None:
+        raise NotImplementedError

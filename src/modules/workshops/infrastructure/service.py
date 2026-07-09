@@ -9,6 +9,7 @@ from src.modules.workshops.infrastructure.mapper import (
     WorkshopMapper,
     WorkshopBankAccountMapper,
     WorkshopMobilePaymentMapper,
+    WorkshopPaymentMethodMapper,
 )
 from src.modules.workshops.application.create import (
     CreateWorkshopRequest,
@@ -23,29 +24,38 @@ from src.modules.workshops.application.create import (
     BankAccountListDTO,
     CreateMobilePaymentRequest,
     UpdateMobilePaymentRequest,
+    RateWorkshopRequest,
     MobilePaymentDTO,
     MobilePaymentListDTO,
     WorkshopBankListDTO,
+    CreatePaymentMethodRequest,
+    UpdatePaymentMethodRequest,
+    PaymentMethodDTO,
+    PaymentMethodListDTO,
 )
 from src.modules.workshops.domain.entity import (
     Workshop,
     WorkshopBankAccount,
     WorkshopMobilePayment,
+    WorkshopPaymentMethod,
 )
 from src.modules.workshops.domain.types import VenezuelanBank
 from src.modules.workshops.infrastructure.repository import (
     WorkshopRepository,
     WorkshopBankAccountRepository,
     WorkshopMobilePaymentRepository,
+    WorkshopPaymentMethodRepository,
 )
 from src.modules.users.infrastructure.repository import UserRepository
-from src.config.models import UserRole
+from src.config.models import UserRole, OrderReview as OrderReviewModel
 
 
 class WorkshopService:
     __mapper = WorkshopMapper()
     __bank_account_mapper = WorkshopBankAccountMapper()
     __mobile_payment_mapper = WorkshopMobilePaymentMapper()
+    __payment_method_mapper = WorkshopPaymentMethodMapper()
+    __payment_method_mapper = WorkshopPaymentMethodMapper()
 
     def __init__(
         self, transaction: Type[GenericTransaction] = Depends(get_transaction)
@@ -59,7 +69,9 @@ class WorkshopService:
         verification_document_url: str | None,
         photo_url: str | None,
     ) -> Response:
-        async with self._transaction(workshop=WorkshopRepository, user=UserRepository) as t:
+        async with self._transaction(
+            workshop=WorkshopRepository, user=UserRepository
+        ) as t:
             if await t.workshop.get_by_rif(dto.rif):
                 return Response(
                     status_code=400,
@@ -83,7 +95,9 @@ class WorkshopService:
             owner = await t.user.get(str(owner_id))
             if owner and "ADMIN" not in [ur.role for ur in owner.roles]:
                 if not any(ur.role == "WORKSHOP_OWNER" for ur in owner.roles):
-                    owner.roles.append(UserRole(role="WORKSHOP_OWNER", user_id=owner.id))
+                    owner.roles.append(
+                        UserRole(role="WORKSHOP_OWNER", user_id=owner.id)
+                    )
                     await t.user.update(owner)
 
         return Response(
@@ -268,6 +282,36 @@ class WorkshopService:
             status_code=200,
             success=True,
             message="Foto del taller actualizada",
+            content=WorkshopDTO.model_validate(self.__mapper.to_entity(w_model)),
+        )
+
+    async def delete_photo(self, workshop_id: UUID, owner_id: UUID) -> Response:
+        async with self._transaction(workshop=WorkshopRepository) as t:
+            w_model = await t.workshop.get(str(workshop_id))
+
+        if not w_model:
+            return Response(
+                status_code=404,
+                success=False,
+                message="Taller no encontrado",
+            )
+
+        if w_model.owner_id != owner_id:
+            return Response(
+                status_code=403,
+                success=False,
+                message="No eres el dueño de este taller",
+            )
+
+        w_model.photo_url = None
+
+        async with self._transaction(workshop=WorkshopRepository) as t:
+            w_model = await t.workshop.update(w_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Foto del taller eliminada",
             content=WorkshopDTO.model_validate(self.__mapper.to_entity(w_model)),
         )
 
@@ -634,6 +678,213 @@ class WorkshopService:
             status_code=200,
             success=True,
             message="Pago móvil desactivado exitosamente",
+        )
+
+    async def create_payment_method(
+        self, workshop_id: UUID, dto: CreatePaymentMethodRequest, user_id: UUID
+    ) -> Response:
+        async with self._transaction(
+            payment_method=WorkshopPaymentMethodRepository, workshop=WorkshopRepository
+        ) as t:
+            w_model = await t.workshop.get(str(workshop_id))
+            if not w_model:
+                return Response(
+                    status_code=404, success=False, message="Taller no encontrado"
+                )
+            if w_model.owner_id != user_id:
+                return Response(
+                    status_code=403,
+                    success=False,
+                    message="No eres el dueño de este taller",
+                )
+
+        entity = WorkshopPaymentMethod(
+            workshop_id=workshop_id,
+            type=dto.type,
+            bank_name=dto.bank_name,
+            account_number=dto.account_number,
+            account_holder=dto.account_holder,
+            phone_number=dto.phone_number,
+            holder_ci=dto.holder_ci,
+        )
+
+        async with self._transaction(
+            payment_method=WorkshopPaymentMethodRepository
+        ) as t:
+            model = await t.payment_method.add(
+                self.__payment_method_mapper.to_model(entity)
+            )
+
+        return Response(
+            status_code=201,
+            success=True,
+            message="Método de pago registrado",
+            content=PaymentMethodDTO.model_validate(
+                self.__payment_method_mapper.to_entity(model)
+            ),
+        )
+
+    async def list_payment_methods(self, workshop_id: UUID) -> Response:
+        async with self._transaction(
+            payment_method=WorkshopPaymentMethodRepository
+        ) as t:
+            methods = await t.payment_method.list_by_workshop(str(workshop_id))
+
+        return Response(
+            status_code=200,
+            success=True,
+            content=PaymentMethodListDTO(
+                payment_methods=[
+                    PaymentMethodDTO.model_validate(
+                        self.__payment_method_mapper.to_entity(m)
+                    )
+                    for m in methods
+                ]
+            ),
+        )
+
+    async def update_payment_method(
+        self,
+        method_id: UUID,
+        workshop_id: UUID,
+        dto: UpdatePaymentMethodRequest,
+        user_id: UUID,
+    ) -> Response:
+        async with self._transaction(
+            payment_method=WorkshopPaymentMethodRepository,
+            workshop=WorkshopRepository,
+        ) as t:
+            m_model = await t.payment_method.get(str(method_id))
+            if not m_model:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Método de pago no encontrado",
+                )
+            if m_model.workshop_id != workshop_id:
+                return Response(
+                    status_code=403, success=False, message="No pertenece a tu taller"
+                )
+
+            w_model = await t.workshop.get(str(workshop_id))
+            if not w_model or w_model.owner_id != user_id:
+                return Response(
+                    status_code=403,
+                    success=False,
+                    message="No eres el dueño de este taller",
+                )
+
+            if dto.type is not None:
+                m_model.type = dto.type
+            if dto.bank_name is not None:
+                m_model.bank_name = dto.bank_name
+            if dto.account_number is not None:
+                m_model.account_number = dto.account_number
+            if dto.account_holder is not None:
+                m_model.account_holder = dto.account_holder
+            if dto.phone_number is not None:
+                m_model.phone_number = dto.phone_number
+            if dto.holder_ci is not None:
+                m_model.holder_ci = dto.holder_ci
+            if dto.is_active is not None:
+                m_model.is_active = dto.is_active
+
+            m_model = await t.payment_method.update(m_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Método de pago actualizado",
+            content=PaymentMethodDTO.model_validate(
+                self.__payment_method_mapper.to_entity(m_model)
+            ),
+        )
+
+    async def delete_payment_method(
+        self, method_id: UUID, workshop_id: UUID, user_id: UUID
+    ) -> Response:
+        async with self._transaction(
+            payment_method=WorkshopPaymentMethodRepository,
+            workshop=WorkshopRepository,
+        ) as t:
+            m_model = await t.payment_method.get(str(method_id))
+            if not m_model:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Método de pago no encontrado",
+                )
+            if m_model.workshop_id != workshop_id:
+                return Response(
+                    status_code=403, success=False, message="No pertenece a tu taller"
+                )
+
+            w_model = await t.workshop.get(str(workshop_id))
+            if not w_model or w_model.owner_id != user_id:
+                return Response(
+                    status_code=403,
+                    success=False,
+                    message="No eres el dueño de este taller",
+                )
+
+            m_model.is_active = 0
+            await t.payment_method.update(m_model)
+
+        return Response(
+            status_code=200, success=True, message="Método de pago desactivado"
+        )
+
+    async def rate_workshop(
+        self, workshop_id: UUID, user_id: UUID, dto: RateWorkshopRequest
+    ) -> Response:
+        async with self._transaction(workshop=WorkshopRepository) as t:
+            w_model = await t.workshop.get(str(workshop_id))
+            if not w_model:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Taller no encontrado",
+                )
+
+            if w_model.owner_id == user_id:
+                return Response(
+                    status_code=400,
+                    success=False,
+                    message="No puedes calificar tu propio taller",
+                )
+
+            # For direct workshop ratings, we'll use a dummy order_id and mark it as such
+            # This maintains compatibility with the OrderReview schema
+            dummy_order_id = workshop_id  # Use workshop_id as dummy order_id for direct ratings
+            review = OrderReviewModel(
+                order_id=dummy_order_id,
+                workshop_id=workshop_id,
+                rater_id=user_id,
+                target_role="WORKSHOP",
+                rating=dto.rating,
+                comment=dto.comment,
+            )
+            t.workshop._session.add(review)
+            await t.workshop._session.flush()
+
+            from sqlalchemy import func as sa_func, select as sa_select
+
+            # Calculate average rating from OrderReview where target_role is WORKSHOP
+            avg = await t.workshop._session.execute(
+                sa_select(sa_func.avg(OrderReviewModel.rating)).where(
+                    OrderReviewModel.workshop_id == workshop_id,
+                    OrderReviewModel.target_role == "WORKSHOP"
+                )
+            )
+            avg_rating = round(avg.scalar() or dto.rating, 1)
+            w_model.average_rating = avg_rating
+            await t.workshop.update(w_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Calificación registrada exitosamente",
+            content=WorkshopDTO.model_validate(self.__mapper.to_entity(w_model)),
         )
 
 

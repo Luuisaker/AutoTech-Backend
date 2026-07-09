@@ -11,3 +11,5 @@ class User(Entity):
     last_name: str
     ci: str
     phone: str
+    photo_url: str | None = None
+    is_suspended: int = 0

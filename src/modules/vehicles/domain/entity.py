@@ -12,4 +12,5 @@ class Vehicle(Entity):
     year: int
     license_plate: str
     vin: str
+    photo_url: str | None = None
     is_active: int = 1

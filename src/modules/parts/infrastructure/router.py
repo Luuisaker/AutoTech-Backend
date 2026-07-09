@@ -64,7 +64,8 @@ class PartRouter(BaseRouter):
             condition: str | None = Query(default=None),
             min_price: float | None = Query(default=None, ge=0),
             max_price: float | None = Query(default=None, ge=0),
-            certified_only: bool = Query(default=False),
+            workshop_id: str | None = Query(default=None),
+            certified_only: bool = Query(default=True),
             offset: int = Query(default=0, ge=0),
             limit: int = Query(default=100, ge=1, le=200),
             service: PartService = Depends(get_part_service),
@@ -75,6 +76,7 @@ class PartRouter(BaseRouter):
                 condition=condition,
                 min_price=min_price,
                 max_price=max_price,
+                workshop_id=workshop_id,
                 certified_only=certified_only,
                 offset=offset,
                 limit=limit,
@@ -139,6 +141,17 @@ class PartRouter(BaseRouter):
         ):
             photo_url = await save_upload_file(photo, "part_photos")
             result = await service.upload_photo(id, current_user.id, photo_url)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.delete("/{id}/photo", response_model=CoreResponse[PartDTO])
+        async def delete_part_photo(
+            id: UUID,
+            response: Response,
+            service: PartService = Depends(get_part_service),
+            current_user: tuple = Depends(require_workshop_owner),
+        ):
+            result = await service.delete_photo(id, current_user.id)
             handle_service_result(result, response)
             return result
 

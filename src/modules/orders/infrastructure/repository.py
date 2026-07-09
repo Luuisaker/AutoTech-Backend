@@ -9,6 +9,8 @@ from src.config.models import Order as OrderModel
 from src.config.models import OrderItem as OrderItemModel
 from src.config.models import Installment as InstallmentModel
 from src.config.models import Transaction as TransactionModel
+from src.config.models import Part as PartModel
+from src.config.models import OrderReview as OrderReviewModel
 
 
 class OrderRepository(GenericSQLRepository[OrderModel]):
@@ -22,7 +24,11 @@ class OrderRepository(GenericSQLRepository[OrderModel]):
         stmt = (
             select(OrderModel)
             .where(condition)
-            .options(joinedload(OrderModel.items))
+            .options(
+                joinedload(OrderModel.items).joinedload(OrderItemModel.part).joinedload(PartModel.workshop),
+                joinedload(OrderModel.installments),
+                joinedload(OrderModel.order_reviews),
+            )
             .order_by(OrderModel.created_at.desc())
             .limit(limit)
             .offset(offset)
@@ -34,10 +40,29 @@ class OrderRepository(GenericSQLRepository[OrderModel]):
         stmt = (
             select(OrderModel)
             .where(cast(ColumnElement[bool], OrderModel.id == order_id))
-            .options(joinedload(OrderModel.items))
+            .options(
+                joinedload(OrderModel.items).joinedload(OrderItemModel.part).joinedload(PartModel.workshop),
+                joinedload(OrderModel.installments),
+                joinedload(OrderModel.order_reviews),
+            )
         )
         r = await self._session.execute(stmt)
         return r.unique().scalars().first()
+
+    async def list_by_workshop(self, workshop_id: str) -> Sequence[OrderModel]:
+        stmt = (
+            select(OrderModel)
+            .options(
+                joinedload(OrderModel.items).joinedload(OrderItemModel.part).joinedload(PartModel.workshop),
+                joinedload(OrderModel.installments),
+                joinedload(OrderModel.order_reviews),
+            )
+            .join(OrderItemModel, OrderItemModel.order_id == OrderModel.id)
+            .where(cast(ColumnElement[bool], OrderItemModel.workshop_id == workshop_id))
+            .order_by(OrderModel.created_at.desc())
+        )
+        r = await self._session.execute(stmt)
+        return r.unique().scalars().all()
 
 
 class OrderItemRepository(GenericSQLRepository[OrderItemModel]):
@@ -57,7 +82,7 @@ class InstallmentRepository(GenericSQLRepository[InstallmentModel]):
 
     async def list_by_order(self, order_id: str) -> Sequence[InstallmentModel]:
         condition = cast(ColumnElement[bool], InstallmentModel.order_id == order_id)
-        stmt = select(InstallmentModel).where(condition)
+        stmt = select(InstallmentModel).where(condition).order_by(InstallmentModel.due_date.asc().nulls_first())
         r = await self._session.execute(stmt)
         return r.scalars().all()
 

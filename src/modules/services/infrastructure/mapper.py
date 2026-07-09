@@ -9,8 +9,10 @@ class ServiceMapper(GenericMapper[Service, ServiceModel]):
             id=model.id,
             workshop_id=model.workshop_id,
             service_name=model.service_name,
+            service_type=model.service_type,
             standard_price_min=model.standard_price_min,
             standard_price_max=model.standard_price_max,
+            vehicle_type=model.vehicle_type,
             created_at=model.created_at,
         )
 
@@ -19,7 +21,9 @@ class ServiceMapper(GenericMapper[Service, ServiceModel]):
             id=entity.id,
             workshop_id=entity.workshop_id,
             service_name=entity.service_name,
+            service_type=entity.service_type,
             standard_price_min=entity.standard_price_min,
             standard_price_max=entity.standard_price_max,
+            vehicle_type=entity.vehicle_type,
             created_at=entity.created_at,
         )

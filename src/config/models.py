@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Text
+from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -19,6 +19,9 @@ class User(Base):
     last_name: Mapped[str] = mapped_column(String)
     ci: Mapped[str] = mapped_column(String, unique=True)
     phone: Mapped[str] = mapped_column(String, nullable=True)
+    photo_url: Mapped[str] = mapped_column(String, nullable=True)
+    is_suspended: Mapped[int] = mapped_column(Integer, default=0)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -28,6 +31,7 @@ class User(Base):
     )
     vehicles = relationship("Vehicle", back_populates="owner")
     workshops = relationship("Workshop", back_populates="owner")
+    service_orders = relationship("ServiceOrder", back_populates="user")
 
 
 class UserRole(Base):
@@ -55,7 +59,9 @@ class Vehicle(Base):
     year: Mapped[int] = mapped_column(Integer)
     license_plate: Mapped[str] = mapped_column(String, unique=True)
     vin: Mapped[str] = mapped_column(String, unique=True)
+    photo_url: Mapped[str] = mapped_column(String, nullable=True)
     is_active: Mapped[int] = mapped_column(Integer, default=1)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -79,7 +85,10 @@ class Workshop(Base):
     latitude: Mapped[float] = mapped_column(Float, nullable=True)
     longitude: Mapped[float] = mapped_column(Float, nullable=True)
     is_certified: Mapped[int] = mapped_column(Integer, default=0)
+    was_certified: Mapped[int] = mapped_column(Integer, default=0)
+    is_suspended: Mapped[int] = mapped_column(Integer, default=0)
     average_rating: Mapped[float] = mapped_column(Float, default=0.0)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -93,6 +102,10 @@ class Workshop(Base):
     mobile_payments = relationship(
         "WorkshopMobilePayment", back_populates="workshop", cascade="all, delete-orphan"
     )
+    payment_methods = relationship(
+        "WorkshopPaymentMethod", back_populates="workshop", cascade="all, delete-orphan"
+    )
+    service_orders = relationship("ServiceOrder", back_populates="workshop")
 
 
 class WorkshopBankAccount(Base):
@@ -133,8 +146,14 @@ class WorkshopService(Base):
     )
     workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
     service_name: Mapped[str] = mapped_column(String)
+    service_type: Mapped[str] = mapped_column(String, nullable=True)
     standard_price_min: Mapped[float] = mapped_column(Float)
     standard_price_max: Mapped[float] = mapped_column(Float)
+    vehicle_type: Mapped[str] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     workshop = relationship("Workshop", back_populates="services")
 
@@ -156,6 +175,7 @@ class Part(Base):
     installment_min_percentage: Mapped[float] = mapped_column(Float, default=0.0)
     photo_url: Mapped[str] = mapped_column(String, nullable=True)
     is_active: Mapped[int] = mapped_column(Integer, default=1)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -225,7 +245,18 @@ class Order(Base):
     vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id"))
     mileage: Mapped[int] = mapped_column(Integer, default=0)
     total_amount: Mapped[float] = mapped_column(Float)
-    status: Mapped[str] = mapped_column(String)  # PENDING, PAID, FINANCED, CANCELLED
+    status: Mapped[str] = mapped_column(String)  # PENDING, PENDING_CONFIRMATION, PAID, FINANCED, CLOSED, CANCELLED
+    delivery_method: Mapped[str] = mapped_column(String, default="PICKUP")  # PICKUP, DELIVERY, SHIPPING
+    delivery_address: Mapped[str] = mapped_column(Text, nullable=True)
+    delivery_fee: Mapped[float] = mapped_column(Float, default=0.0)
+    reference_number: Mapped[str] = mapped_column(String, nullable=True)
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    tracking_number: Mapped[str] = mapped_column(String, nullable=True)
+    shipping_notes: Mapped[str] = mapped_column(Text, nullable=True)
+    shipped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_by_client: Mapped[int] = mapped_column(Integer, default=0)
+    closed_by_workshop: Mapped[int] = mapped_column(Integer, default=0)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -233,6 +264,7 @@ class Order(Base):
     items = relationship("OrderItem", back_populates="order")
     installments = relationship("Installment", back_populates="order")
     vehicle = relationship("Vehicle")
+    order_reviews = relationship("OrderReview", back_populates="order")
 
 
 class OrderItem(Base):
@@ -243,8 +275,11 @@ class OrderItem(Base):
     )
     order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"))
     part_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("parts.id"))
+    workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
+    part_name: Mapped[str] = mapped_column(String, nullable=True)
     quantity: Mapped[int] = mapped_column(Integer)
     unit_price: Mapped[float] = mapped_column(Float)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     order = relationship("Order", back_populates="items")
     part = relationship("Part")
@@ -259,8 +294,11 @@ class Installment(Base):
     order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"))
     amount: Mapped[float] = mapped_column(Float)
     due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payment_method: Mapped[str] = mapped_column(String, default="OTHER")
+    reference_number: Mapped[str] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String)  # PENDING, PAID, OVERDUE
     paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     order = relationship("Order", back_populates="installments")
 
@@ -344,6 +382,29 @@ class Review(Base):
     )
 
 
+class OrderReview(Base):
+    __tablename__ = "order_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id"))
+    workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
+    rater_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    target_role: Mapped[str] = mapped_column(String)  # WORKSHOP or CLIENT
+    rating: Mapped[int] = mapped_column(Integer)
+    comment: Mapped[str] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    order = relationship("Order", back_populates="order_reviews")
+    __table_args__ = (
+        UniqueConstraint("order_id", "rater_id", name="uq_order_review_rater"),
+        UniqueConstraint("order_id", "target_role", name="uq_order_review_target_role"),
+    )
+
+
 class UserPaymentAccount(Base):
     __tablename__ = "user_payment_accounts"
 
@@ -391,3 +452,68 @@ class CartItem(Base):
 
     cart = relationship("Cart", back_populates="items")
     part = relationship("Part")
+
+
+class WorkshopPaymentMethod(Base):
+    __tablename__ = "workshop_payment_methods"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
+    type: Mapped[str] = mapped_column(String)  # bank_transfer, mobile_payment, cash
+    bank_name: Mapped[str] = mapped_column(String, nullable=True)
+    account_number: Mapped[str] = mapped_column(String, nullable=True)
+    account_holder: Mapped[str] = mapped_column(String, nullable=True)
+    phone_number: Mapped[str] = mapped_column(String, nullable=True)
+    holder_ci: Mapped[str] = mapped_column(String, nullable=True)
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    workshop = relationship("Workshop", back_populates="payment_methods")
+
+
+class ServiceOrder(Base):
+    __tablename__ = "service_orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
+    service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshop_services.id"))
+    vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id"))
+    status: Mapped[str] = mapped_column(String, default="PENDING")
+    # PENDING → AT_WORKSHOP → QUOTED → ACCEPTED → IN_PROGRESS → COMPLETED → DELIVERED → CLOSED
+    #                                                                       → SHIPPED → DELIVERED → CLOSED
+    #                              ↘ REJECTED
+    # PENDING → CANCELLED
+    base_price: Mapped[float] = mapped_column(Float)
+    final_price: Mapped[float] = mapped_column(Float, nullable=True)
+    extra_charge: Mapped[float] = mapped_column(Float, default=0.0)
+    extra_charge_note: Mapped[str] = mapped_column(Text, nullable=True)
+    extra_charge_status: Mapped[str] = mapped_column(String, default="NONE")
+    # NONE, PENDING_APPROVAL, APPROVED, REJECTED
+    notes: Mapped[str] = mapped_column(Text, nullable=True)
+    price_min: Mapped[float] = mapped_column(Float, nullable=True)
+    price_max: Mapped[float] = mapped_column(Float, nullable=True)
+    delivery_method: Mapped[str] = mapped_column(String, default="PICKUP")
+    tracking_number: Mapped[str] = mapped_column(String, nullable=True)
+    shipping_notes: Mapped[str] = mapped_column(Text, nullable=True)
+    shipped_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_by_client: Mapped[int] = mapped_column(Integer, default=0)
+    closed_by_workshop: Mapped[int] = mapped_column(Integer, default=0)
+    client_rating: Mapped[int] = mapped_column(Integer, nullable=True)
+    client_review: Mapped[str] = mapped_column(Text, nullable=True)
+    workshop_rating: Mapped[int] = mapped_column(Integer, nullable=True)
+    workshop_review: Mapped[str] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("User", back_populates="service_orders")
+    workshop = relationship("Workshop", back_populates="service_orders")
+    workshop_service = relationship("WorkshopService")
+    vehicle = relationship("Vehicle")

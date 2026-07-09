@@ -18,7 +18,10 @@ class PartRepository(GenericSQLRepository[PartModel]):
         self, workshop_id: str, offset: int = 0, limit: int = 100
     ) -> Sequence[PartModel]:
         condition = cast(ColumnElement[bool], PartModel.workshop_id == workshop_id)
-        stmt = select(PartModel).where(condition).limit(limit).offset(offset)
+        stmt = select(PartModel).where(
+            condition,
+            PartModel.deleted_at.is_(None),
+        ).limit(limit).offset(offset)
         r = await self._session.execute(stmt)
         return r.scalars().all()
 
@@ -29,6 +32,7 @@ class PartRepository(GenericSQLRepository[PartModel]):
         condition: str | None = None,
         min_price: float | None = None,
         max_price: float | None = None,
+        workshop_id: str | None = None,
         certified_only: bool = False,
         offset: int = 0,
         limit: int = 100,
@@ -38,11 +42,16 @@ class PartRepository(GenericSQLRepository[PartModel]):
         stmt = select(PartModel).join(
             WorkshopModel, PartModel.workshop_id == WorkshopModel.id
         )
-        where_clauses: list = [cast(ColumnElement[bool], PartModel.is_active == 1)]
+        where_clauses: list = [cast(ColumnElement[bool], PartModel.is_active == 1), PartModel.deleted_at.is_(None)]
 
         if certified_only:
             where_clauses.append(
                 cast(ColumnElement[bool], WorkshopModel.is_certified == 1)
+            )
+
+        if workshop_id:
+            where_clauses.append(
+                cast(ColumnElement[bool], PartModel.workshop_id == workshop_id)
             )
 
         if query:

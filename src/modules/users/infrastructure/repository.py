@@ -13,7 +13,7 @@ class UserRepository(GenericSQLRepository[UserModel]):
 
     async def get_by_email(self, email: str) -> UserModel | None:
         condition = cast(ColumnElement[bool], UserModel.email == email)
-        stmt = select(UserModel).where(condition)
+        stmt = select(UserModel).where(condition, UserModel.deleted_at.is_(None))
         r = await self._session.execute(stmt)
         return r.scalars().first()
 

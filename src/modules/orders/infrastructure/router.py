@@ -6,15 +6,23 @@ from src.modules.orders.infrastructure.service import (
     OrderService,
     get_order_service,
 )
-from src.modules.users.infrastructure.auth import get_current_user_id
+from src.modules.users.infrastructure.auth import get_current_user_id, CurrentUser
+from src.modules.users.infrastructure.permissions import (
+    require_workshop_owner,
+)
 from src.utils.handle_service_result import handle_service_result
 from src.modules.orders.application.create import (
     CheckoutRequest,
     PayInstallmentRequest,
+    MarkInstallmentPaidRequest,
+    ConfirmPaymentRequest,
+    RateOrderRequest,
+    MarkShippedRequest,
     OrderDTO,
     OrderListDTO,
     InstallmentListDTO,
     InstallmentDTO,
+    WorkshopOrderListDTO,
 )
 
 
@@ -28,7 +36,7 @@ class OrderRouter(BaseRouter):
     def _register_routes(self) -> None:
         @self._router.post(
             "/checkout",
-            response_model=CoreResponse[OrderDTO],
+            response_model=CoreResponse[OrderListDTO],
             status_code=201,
         )
         async def checkout(
@@ -50,6 +58,61 @@ class OrderRouter(BaseRouter):
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.list_mine(user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.get(
+            "/workshop/{workshop_id}",
+            response_model=CoreResponse[WorkshopOrderListDTO],
+        )
+        async def workshop_orders(
+            workshop_id: UUID,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.list_by_workshop(workshop_id, current_user.id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.get(
+            "/workshops/all",
+            response_model=CoreResponse[WorkshopOrderListDTO],
+        )
+        async def all_workshop_orders(
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.list_by_all_workshops(current_user.id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.get(
+            "/{order_id}",
+            response_model=CoreResponse[OrderDTO],
+        )
+        async def get_order(
+            order_id: UUID,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.get_by_id(order_id, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/{order_id}/mark-received",
+            response_model=CoreResponse[OrderDTO],
+        )
+        async def mark_received(
+            order_id: UUID,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.mark_received(order_id, user_id)
             handle_service_result(result, response)
             return result
 
@@ -79,5 +142,108 @@ class OrderRouter(BaseRouter):
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.pay_installment(installment_id, user_id, body)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/installments/{installment_id}/mark-paid",
+            response_model=CoreResponse[InstallmentDTO],
+        )
+        async def mark_installment_paid(
+            installment_id: UUID,
+            body: MarkInstallmentPaidRequest,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.mark_installment_paid(installment_id, user_id, body)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/{order_id}/confirm-payment",
+            response_model=CoreResponse[OrderDTO],
+        )
+        async def confirm_payment(
+            order_id: UUID,
+            body: ConfirmPaymentRequest,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.confirm_payment(order_id, user_id, body)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/{order_id}/confirm-received",
+            response_model=CoreResponse[OrderDTO],
+        )
+        async def confirm_received(
+            order_id: UUID,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.confirm_received(order_id, current_user.id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/{order_id}/mark-shipped",
+            response_model=CoreResponse[OrderDTO],
+        )
+        async def mark_shipped(
+            order_id: UUID,
+            body: MarkShippedRequest,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.mark_shipped(order_id, current_user.id, body)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/{order_id}/close-workshop",
+            response_model=CoreResponse[OrderDTO],
+        )
+        async def close_by_workshop(
+            order_id: UUID,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.mark_closed_by_workshop(order_id, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/{order_id}/rate-workshop",
+            response_model=CoreResponse[OrderDTO],
+        )
+        async def rate_order_workshop(
+            order_id: UUID,
+            body: RateOrderRequest,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.rate_order_workshop(order_id, user_id, body)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/{order_id}/rate-client",
+            response_model=CoreResponse[OrderDTO],
+        )
+        async def rate_order_client(
+            order_id: UUID,
+            body: RateOrderRequest,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.rate_order_client(order_id, user_id, body)
             handle_service_result(result, response)
             return result

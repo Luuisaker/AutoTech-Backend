@@ -37,6 +37,8 @@ class UserDTO(BaseModel):
     last_name: str
     ci: str
     phone: str | None
+    photo_url: str | None = None
+    is_suspended: int = 0
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

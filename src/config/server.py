@@ -17,6 +17,7 @@ from src.modules.services.infrastructure.router import ServiceRouter
 from src.modules.payments.infrastructure.router import PaymentRouter
 from src.modules.cart.infrastructure.router import CartRouter
 from src.modules.orders.infrastructure.router import OrderRouter
+from src.modules.admin.infrastructure.router import AdminRouter
 
 routers = [
     UserRouter(),
@@ -27,6 +28,7 @@ routers = [
     PaymentRouter(),
     CartRouter(),
     OrderRouter(),
+    AdminRouter(),
 ]
 
 
@@ -52,6 +54,7 @@ class App:
             "http://localhost:8080",
             "http://127.0.0.1:8080",
             "http://localhost:5173",
+            "http://localhost:3000",
         ]
         self.server.add_middleware(
             CORSMiddleware,

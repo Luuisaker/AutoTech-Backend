@@ -1,5 +1,5 @@
 from uuid import UUID
-from fastapi import Depends, APIRouter, Response
+from fastapi import Depends, APIRouter, Response, File, UploadFile
 from src.core.infrastructure.router import BaseRouter
 from src.core.application.base_response import Response as CoreResponse
 from src.modules.vehicles.infrastructure.service import (
@@ -81,5 +81,30 @@ class VehicleRouter(BaseRouter):
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.deactivate(id, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.put("/{id}/photo", response_model=CoreResponse[VehicleDTO])
+        async def upload_vehicle_photo(
+            id: UUID,
+            response: Response,
+            photo: UploadFile = File(...),
+            service: VehicleService = Depends(get_vehicle_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            from src.utils.file_upload import save_upload_file
+            photo_url = await save_upload_file(photo, "vehicle_photos")
+            result = await service.update(id, owner_id=user_id, photo_url=photo_url)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.delete("/{id}/photo", response_model=CoreResponse[VehicleDTO])
+        async def delete_vehicle_photo(
+            id: UUID,
+            response: Response,
+            service: VehicleService = Depends(get_vehicle_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.update(id, owner_id=user_id, photo_url=None)
             handle_service_result(result, response)
             return result

@@ -12,6 +12,9 @@ from src.config.models import (
 from src.config.models import (
     WorkshopMobilePayment as WorkshopMobilePaymentModel,
 )
+from src.config.models import (
+    WorkshopPaymentMethod as WorkshopPaymentMethodModel,
+)
 
 
 class WorkshopRepository(GenericSQLRepository[WorkshopModel]):
@@ -20,7 +23,9 @@ class WorkshopRepository(GenericSQLRepository[WorkshopModel]):
 
     async def get_by_rif(self, rif: str) -> WorkshopModel | None:
         condition = cast(ColumnElement[bool], WorkshopModel.rif == rif)
-        stmt = select(WorkshopModel).where(condition)
+        stmt = select(WorkshopModel).where(
+            condition, WorkshopModel.deleted_at.is_(None)
+        )
         r = await self._session.execute(stmt)
         return r.scalars().first()
 
@@ -42,7 +47,10 @@ class WorkshopRepository(GenericSQLRepository[WorkshopModel]):
             return await self.list_by_owner(owner_id)
 
         stmt = select(WorkshopModel)
-        where_clauses: list = []
+        where_clauses: list = [
+            cast(ColumnElement[bool], WorkshopModel.is_suspended == 0),
+            cast(ColumnElement[bool], WorkshopModel.deleted_at.is_(None)),
+        ]
 
         if query:
             like_pattern = f"%{query}%"
@@ -71,6 +79,7 @@ class WorkshopRepository(GenericSQLRepository[WorkshopModel]):
                     ColumnElement[bool],
                     WorkshopModel.verification_document_url.isnot(None),
                 ),
+                cast(ColumnElement[bool], WorkshopModel.deleted_at.is_(None)),
             )
             .options(selectinload(WorkshopModel.owner))
             .order_by(WorkshopModel.created_at.desc())
@@ -106,5 +115,21 @@ class WorkshopMobilePaymentRepository(GenericSQLRepository[WorkshopMobilePayment
             WorkshopMobilePaymentModel.workshop_id == workshop_id,
         )
         stmt = select(WorkshopMobilePaymentModel).where(condition)
+        r = await self._session.execute(stmt)
+        return r.scalars().all()
+
+
+class WorkshopPaymentMethodRepository(GenericSQLRepository[WorkshopPaymentMethodModel]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, WorkshopPaymentMethodModel)
+
+    async def list_by_workshop(
+        self, workshop_id: str
+    ) -> Sequence[WorkshopPaymentMethodModel]:
+        condition = cast(
+            ColumnElement[bool],
+            WorkshopPaymentMethodModel.workshop_id == workshop_id,
+        )
+        stmt = select(WorkshopPaymentMethodModel).where(condition)
         r = await self._session.execute(stmt)
         return r.scalars().all()

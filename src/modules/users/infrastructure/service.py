@@ -67,11 +67,18 @@ class UserService:
         async with self._transaction(user=UserRepository) as t:
             user_model = await t.user.get_by_email(dto.email)
 
-        if not user_model:
+        if not user_model or user_model.deleted_at is not None:
             return Response(
                 status_code=401,
                 success=False,
-                message="Credenciales inválidas",
+                message="Contraseña o correo incorrecto",
+            )
+
+        if user_model.is_suspended:
+            return Response(
+                status_code=403,
+                success=False,
+                message="Tu cuenta ha sido suspendida temporalmente. Contacta al Servicio Técnico.",
             )
 
         if not bcrypt.checkpw(
@@ -81,7 +88,7 @@ class UserService:
             return Response(
                 status_code=401,
                 success=False,
-                message="Credenciales inválidas",
+                message="Contraseña o correo incorrecto",
             )
 
         roles = [ur.role for ur in user_model.roles]
@@ -136,6 +143,15 @@ class UserService:
             message="Usuario actualizado exitosamente",
             content=UserDTO.model_validate(self.__mapper.to_entity(user_model)),
         )
+
+    async def update_profile(self, user_id: UUID, *, photo_url: str | None = None) -> User:
+        async with self._transaction(user=UserRepository) as t:
+            user_model = await t.user.get(str(user_id))
+            if not user_model:
+                raise ValueError("Usuario no encontrado")
+            user_model.photo_url = photo_url
+            user_model = await t.user.update(user_model)
+        return user_model
 
     async def change_password(
         self, user_id: UUID, dto: ChangePasswordRequest

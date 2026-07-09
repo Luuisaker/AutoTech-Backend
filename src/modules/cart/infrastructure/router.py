@@ -10,7 +10,9 @@ from src.modules.users.infrastructure.auth import get_current_user_id
 from src.utils.handle_service_result import handle_service_result
 from src.modules.cart.application.create import (
     AddToCartRequest,
+    UpdateCartItemRequest,
     CartDTO,
+    WorkshopBreakdownDTO,
 )
 
 
@@ -32,6 +34,19 @@ class CartRouter(BaseRouter):
             handle_service_result(result, response)
             return result
 
+        @self._router.get(
+            "/workshop-breakdown",
+            response_model=CoreResponse[WorkshopBreakdownDTO],
+        )
+        async def workshop_breakdown(
+            response: Response,
+            service: CartService = Depends(get_cart_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.workshop_breakdown(user_id)
+            handle_service_result(result, response)
+            return result
+
         @self._router.post("/add", response_model=CoreResponse, status_code=200)
         async def add_to_cart(
             body: AddToCartRequest,
@@ -40,6 +55,18 @@ class CartRouter(BaseRouter):
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.add_item(body, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.put("/items/{item_id}", response_model=CoreResponse)
+        async def update_cart_item(
+            item_id: UUID,
+            body: UpdateCartItemRequest,
+            response: Response,
+            service: CartService = Depends(get_cart_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.update_item_quantity(item_id, user_id, body)
             handle_service_result(result, response)
             return result
 

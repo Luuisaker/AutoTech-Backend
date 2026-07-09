@@ -14,6 +14,7 @@ class VehicleMapper(GenericMapper[Vehicle, VehicleModel]):
             year=model.year,
             license_plate=model.license_plate,
             vin=model.vin,
+            photo_url=model.photo_url,
             is_active=model.is_active,
             created_at=model.created_at,
         )
@@ -28,6 +29,7 @@ class VehicleMapper(GenericMapper[Vehicle, VehicleModel]):
             year=entity.year,
             license_plate=entity.license_plate,
             vin=entity.vin,
+            photo_url=entity.photo_url,
             is_active=entity.is_active,
             created_at=entity.created_at,
         )

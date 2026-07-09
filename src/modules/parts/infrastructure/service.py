@@ -28,9 +28,7 @@ from src.modules.parts.infrastructure.repository import (
     PartPaymentRepository,
     VehicleHistoryLogRepository,
 )
-from src.modules.workshops.infrastructure.repository import (
-    WorkshopRepository,
-)
+from src.modules.workshops.infrastructure.repository import WorkshopRepository
 from src.modules.vehicles.infrastructure.repository import (
     VehicleRepository,
 )
@@ -81,13 +79,6 @@ class PartService:
                     message="No eres el dueño de este taller",
                 )
 
-            if not w_model.is_certified:
-                return Response(
-                    status_code=403,
-                    success=False,
-                    message="El taller debe estar certificado para publicar productos",
-                )
-
         part_entity = Part(
             workshop_id=dto.workshop_id,
             name=dto.name,
@@ -118,30 +109,43 @@ class PartService:
         condition: str | None = None,
         min_price: float | None = None,
         max_price: float | None = None,
+        workshop_id: str | None = None,
         certified_only: bool = False,
         offset: int = 0,
         limit: int = 100,
     ) -> Response:
-        async with self._transaction(part=PartRepository) as t:
+        async with self._transaction(part=PartRepository, workshop=WorkshopRepository) as t:
             parts = await t.part.search(
                 query=query,
                 category=category,
                 condition=condition,
                 min_price=min_price,
                 max_price=max_price,
+                workshop_id=workshop_id,
                 certified_only=certified_only,
                 offset=offset,
                 limit=limit,
             )
 
+            # Build DTOs with workshop data
+            parts_dtos = []
+            for p in parts:
+                workshop = await t.workshop.get(p.workshop_id) if p.workshop_id else None
+                part_entity = self.__mapper.to_entity(p)
+                
+                # Create a dict with workshop data
+                part_dict = {
+                    **part_entity.__dict__,
+                    "workshop_name": workshop.name if workshop else "Unknown",
+                    "workshop_is_certified": workshop.is_certified if workshop else False,
+                }
+                
+                parts_dtos.append(PartDTO.model_validate(part_dict))
+
         return Response(
             status_code=200,
             success=True,
-            content=PartListDTO(
-                parts=[
-                    PartDTO.model_validate(self.__mapper.to_entity(p)) for p in parts
-                ]
-            ),
+            content=PartListDTO(parts=parts_dtos),
         )
 
     async def list_by_workshop(
@@ -439,6 +443,37 @@ class PartService:
             status_code=200,
             success=True,
             message="Foto del producto actualizada",
+            content=PartDTO.model_validate(self.__mapper.to_entity(p_model)),
+        )
+
+    async def delete_photo(self, part_id: UUID, user_id: UUID) -> Response:
+        async with self._transaction(
+            part=PartRepository, workshop=WorkshopRepository
+        ) as t:
+            p_model = await t.part.get(str(part_id))
+
+            if not p_model:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Producto no encontrado",
+                )
+
+            w_model = await t.workshop.get(str(p_model.workshop_id))
+            if not w_model or w_model.owner_id != user_id:
+                return Response(
+                    status_code=403,
+                    success=False,
+                    message="No eres el dueño de este taller",
+                )
+
+            p_model.photo_url = None
+            p_model = await t.part.update(p_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Foto del producto eliminada",
             content=PartDTO.model_validate(self.__mapper.to_entity(p_model)),
         )
 

@@ -28,6 +28,11 @@ from src.modules.workshops.application.create import (
     MobilePaymentDTO,
     MobilePaymentListDTO,
     WorkshopBankListDTO,
+    CreatePaymentMethodRequest,
+    UpdatePaymentMethodRequest,
+    PaymentMethodDTO,
+    PaymentMethodListDTO,
+    RateWorkshopRequest,
 )
 
 
@@ -173,6 +178,17 @@ class WorkshopRouter(BaseRouter):
         ):
             photo_url = await save_upload_file(photo, "workshop_photos")
             result = await service.upload_photo(id, user_id, photo_url)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.delete("/{id}/photo", response_model=CoreResponse[WorkshopDTO])
+        async def delete_workshop_photo(
+            id: UUID,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.delete_photo(id, user_id)
             handle_service_result(result, response)
             return result
 
@@ -338,5 +354,91 @@ class WorkshopRouter(BaseRouter):
             result = await service.delete_mobile_payment(
                 payment_id, workshop_id, current_user.id
             )
+            handle_service_result(result, response)
+            return result
+
+        # -- Payment Methods --
+
+        @self._router.post(
+            "/{workshop_id}/payment-methods",
+            response_model=CoreResponse[PaymentMethodDTO],
+            status_code=201,
+        )
+        async def create_payment_method(
+            workshop_id: UUID,
+            body: CreatePaymentMethodRequest,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.create_payment_method(
+                workshop_id, body, current_user.id
+            )
+            handle_service_result(result, response)
+            return result
+
+        @self._router.get(
+            "/{workshop_id}/payment-methods",
+            response_model=CoreResponse[PaymentMethodListDTO],
+        )
+        async def list_payment_methods(
+            workshop_id: UUID,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+        ):
+            result = await service.list_payment_methods(workshop_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.put(
+            "/{workshop_id}/payment-methods/{method_id}",
+            response_model=CoreResponse[PaymentMethodDTO],
+        )
+        async def update_payment_method(
+            workshop_id: UUID,
+            method_id: UUID,
+            body: UpdatePaymentMethodRequest,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.update_payment_method(
+                method_id, workshop_id, body, current_user.id
+            )
+            handle_service_result(result, response)
+            return result
+
+        @self._router.delete(
+            "/{workshop_id}/payment-methods/{method_id}",
+            response_model=CoreResponse,
+        )
+        async def delete_payment_method(
+            workshop_id: UUID,
+            method_id: UUID,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.delete_payment_method(
+                method_id, workshop_id, current_user.id
+            )
+            handle_service_result(result, response)
+            return result
+
+        # -- Ratings --
+
+        @self._router.post(
+            "/{workshop_id}/ratings",
+            response_model=CoreResponse[None],
+            status_code=201,
+        )
+        async def rate_workshop(
+            workshop_id: UUID,
+            body: RateWorkshopRequest,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.rate_workshop(workshop_id, user_id, body)
             handle_service_result(result, response)
             return result

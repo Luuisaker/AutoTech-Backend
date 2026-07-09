@@ -11,10 +11,12 @@ class UserMapper(GenericMapper[User, UserModel]):
             email=model.email,
             password_hash=model.password_hash,
             roles=[ur.role for ur in model.roles],
+            photo_url=model.photo_url,
             first_name=model.first_name,
             last_name=model.last_name,
             ci=model.ci,
             phone=model.phone,
+            is_suspended=model.is_suspended,
             created_at=model.created_at,
         )
 
@@ -23,6 +25,7 @@ class UserMapper(GenericMapper[User, UserModel]):
             id=entity.id,
             email=entity.email,
             password_hash=entity.password_hash,
+            photo_url=entity.photo_url,
             first_name=entity.first_name,
             last_name=entity.last_name,
             ci=entity.ci,

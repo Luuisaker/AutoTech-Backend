@@ -109,7 +109,7 @@ class VehicleService:
         )
 
     async def update(
-        self, vehicle_id: UUID, dto: UpdateVehicleRequest, owner_id: UUID
+        self, vehicle_id: UUID, dto: UpdateVehicleRequest | None = None, owner_id: UUID | None = None, *, photo_url: str | None = None
     ) -> Response:
         async with self._transaction(vehicle=VehicleRepository) as t:
             v_model = await t.vehicle.get(str(vehicle_id))
@@ -128,14 +128,18 @@ class VehicleService:
                 message="No tienes acceso a este vehículo",
             )
 
-        if dto.vehicle_type is not None:
-            v_model.vehicle_type = dto.vehicle_type
-        if dto.brand is not None:
-            v_model.brand = dto.brand
-        if dto.model is not None:
-            v_model.model = dto.model
-        if dto.year is not None:
-            v_model.year = dto.year
+        if photo_url is not None:
+            v_model.photo_url = photo_url
+
+        if dto is not None:
+            if dto.vehicle_type is not None:
+                v_model.vehicle_type = dto.vehicle_type
+            if dto.brand is not None:
+                v_model.brand = dto.brand
+            if dto.model is not None:
+                v_model.model = dto.model
+            if dto.year is not None:
+                v_model.year = dto.year
 
         async with self._transaction(vehicle=VehicleRepository) as t:
             v_model = await t.vehicle.update(v_model)

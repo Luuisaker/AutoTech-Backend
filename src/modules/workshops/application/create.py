@@ -34,6 +34,7 @@ class WorkshopDTO(BaseModel):
     latitude: float | None
     longitude: float | None
     is_certified: int
+    is_suspended: int
     average_rating: float
     verification_document_url: str | None
     photo_url: str | None
@@ -91,6 +92,11 @@ class BankAccountListDTO(BaseModel):
     accounts: list[BankAccountDTO]
 
 
+class RateWorkshopRequest(BaseModel):
+    rating: int = Field(..., ge=1, le=5)
+    comment: str | None = Field(default=None, max_length=500)
+
+
 class CreateMobilePaymentRequest(BaseModel):
     phone_number: str = Field(..., min_length=7, max_length=15)
     bank_name: str = Field(...)
@@ -121,3 +127,41 @@ class MobilePaymentListDTO(BaseModel):
 
 class WorkshopBankListDTO(BaseModel):
     banks: list[str]
+
+
+class CreatePaymentMethodRequest(BaseModel):
+    type: str = Field(..., pattern="bank_transfer|mobile_payment|cash")
+    bank_name: str | None = None
+    account_number: str | None = None
+    account_holder: str | None = None
+    phone_number: str | None = None
+    holder_ci: str | None = None
+
+
+class UpdatePaymentMethodRequest(BaseModel):
+    type: str | None = Field(default=None, pattern="bank_transfer|mobile_payment|cash")
+    bank_name: str | None = None
+    account_number: str | None = None
+    account_holder: str | None = None
+    phone_number: str | None = None
+    holder_ci: str | None = None
+    is_active: int | None = Field(default=None, ge=0, le=1)
+
+
+class PaymentMethodDTO(BaseModel):
+    id: UUID
+    workshop_id: UUID
+    type: str
+    bank_name: str | None
+    account_number: str | None
+    account_holder: str | None
+    phone_number: str | None
+    holder_ci: str | None
+    is_active: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PaymentMethodListDTO(BaseModel):
+    payment_methods: list[PaymentMethodDTO]

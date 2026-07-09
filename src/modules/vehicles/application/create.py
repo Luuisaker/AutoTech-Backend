@@ -44,6 +44,7 @@ class VehicleDTO(BaseModel):
     year: int
     license_plate: str
     vin: str
+    photo_url: str | None = None
     is_active: int
     created_at: datetime
 

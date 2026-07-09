@@ -3,6 +3,7 @@ from src.modules.workshops.domain.entity import (
     Workshop,
     WorkshopBankAccount,
     WorkshopMobilePayment,
+    WorkshopPaymentMethod,
 )
 from src.config.models import Workshop as WorkshopModel
 from src.config.models import (
@@ -10,6 +11,9 @@ from src.config.models import (
 )
 from src.config.models import (
     WorkshopMobilePayment as WorkshopMobilePaymentModel,
+)
+from src.config.models import (
+    WorkshopPaymentMethod as WorkshopPaymentMethodModel,
 )
 
 
@@ -24,6 +28,8 @@ class WorkshopMapper(GenericMapper[Workshop, WorkshopModel]):
             latitude=model.latitude,
             longitude=model.longitude,
             is_certified=model.is_certified,
+            was_certified=model.was_certified,
+            is_suspended=model.is_suspended,
             average_rating=model.average_rating,
             verification_document_url=model.verification_document_url,
             photo_url=model.photo_url,
@@ -40,6 +46,8 @@ class WorkshopMapper(GenericMapper[Workshop, WorkshopModel]):
             latitude=entity.latitude,
             longitude=entity.longitude,
             is_certified=entity.is_certified,
+            was_certified=entity.was_certified,
+            is_suspended=entity.is_suspended,
             average_rating=entity.average_rating,
             verification_document_url=entity.verification_document_url,
             photo_url=entity.photo_url,
@@ -90,6 +98,36 @@ class WorkshopMobilePaymentMapper(
             workshop_id=entity.workshop_id,
             phone_number=entity.phone_number,
             bank_name=entity.bank_name,
+            holder_ci=entity.holder_ci,
+            is_active=entity.is_active,
+        )
+
+
+class WorkshopPaymentMethodMapper(
+    GenericMapper[WorkshopPaymentMethod, WorkshopPaymentMethodModel]
+):
+    def to_entity(self, model: WorkshopPaymentMethodModel) -> WorkshopPaymentMethod:
+        return WorkshopPaymentMethod(
+            id=model.id,
+            workshop_id=model.workshop_id,
+            type=model.type,
+            bank_name=model.bank_name,
+            account_number=model.account_number,
+            account_holder=model.account_holder,
+            phone_number=model.phone_number,
+            holder_ci=model.holder_ci,
+            is_active=model.is_active,
+        )
+
+    def to_model(self, entity: WorkshopPaymentMethod) -> WorkshopPaymentMethodModel:
+        return WorkshopPaymentMethodModel(
+            id=entity.id,
+            workshop_id=entity.workshop_id,
+            type=entity.type,
+            bank_name=entity.bank_name,
+            account_number=entity.account_number,
+            account_holder=entity.account_holder,
+            phone_number=entity.phone_number,
             holder_ci=entity.holder_ci,
             is_active=entity.is_active,
         )

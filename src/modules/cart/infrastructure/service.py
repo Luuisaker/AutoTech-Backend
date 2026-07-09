@@ -8,8 +8,11 @@ from src.core.application.base_response import Response
 from src.modules.cart.infrastructure.mapper import CartMapper, CartItemMapper
 from src.modules.cart.application.create import (
     AddToCartRequest,
+    UpdateCartItemRequest,
     CartDTO,
     CartItemDetailDTO,
+    WorkshopGroupDTO,
+    WorkshopBreakdownDTO,
 )
 from src.modules.cart.domain.entity import Cart, CartItem
 from src.modules.cart.infrastructure.repository import (
@@ -145,6 +148,8 @@ class CartService:
                             workshop_name=w.name,
                             quantity=ci.quantity,
                             subtotal=subtotal,
+                            allows_installments=bool(p.allows_installments),
+                            installment_min_percentage=float(p.installment_min_percentage),
                         )
                     )
 
@@ -152,6 +157,107 @@ class CartService:
             status_code=200,
             success=True,
             content=CartDTO(id=cart.id, items=items_detail, total=round(total, 2)),
+        )
+
+    async def workshop_breakdown(self, user_id: UUID) -> Response:
+        async with self._transaction(
+            cart=CartRepository,
+        ) as t:
+            cart = await t.cart.get_by_user(str(user_id))
+            if not cart or not cart.items:
+                return Response(
+                    status_code=200,
+                    success=True,
+                    content=WorkshopBreakdownDTO(groups=[], total=0.0),
+                )
+
+            groups: dict[str, dict] = {}
+            for ci in cart.items:
+                stmt = (
+                    select(PartModel, WorkshopModel)
+                    .join(WorkshopModel, PartModel.workshop_id == WorkshopModel.id)
+                    .where(PartModel.id == ci.part_id)
+                )
+                r = await t.cart._session.execute(stmt)
+                row = r.one_or_none()
+                if row:
+                    p, w = row
+                    wid = str(w.id)
+                    if wid not in groups:
+                        groups[wid] = {
+                            "workshop_id": w.id,
+                            "workshop_name": w.name,
+                            "items": [],
+                            "subtotal": 0.0,
+                        }
+                    subtotal = p.price * ci.quantity
+                    groups[wid]["items"].append(
+                        CartItemDetailDTO(
+                            id=ci.id,
+                            part_id=ci.part_id,
+                            part_name=p.name,
+                            part_price=p.price,
+                            workshop_id=w.id,
+                            workshop_name=w.name,
+                            quantity=ci.quantity,
+                            subtotal=subtotal,
+                            allows_installments=bool(p.allows_installments),
+                            installment_min_percentage=float(p.installment_min_percentage),
+                        )
+                    )
+                    groups[wid]["subtotal"] = round(groups[wid]["subtotal"] + subtotal, 2)
+
+        total = round(sum(g["subtotal"] for g in groups.values()), 2)
+        return Response(
+            status_code=200,
+            success=True,
+            content=WorkshopBreakdownDTO(
+                groups=[
+                    WorkshopGroupDTO(**g) for g in groups.values()
+                ],
+                total=total,
+            ),
+        )
+
+    async def update_item_quantity(
+        self, item_id: UUID, user_id: UUID, dto: UpdateCartItemRequest
+    ) -> Response:
+        async with self._transaction(
+            cart=CartRepository,
+            cart_item=CartItemRepository,
+            part=PartRepository,
+        ) as t:
+            item = await t.cart_item.get(str(item_id))
+            if not item:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Item no encontrado",
+                )
+
+            cart = await t.cart.get(str(item.cart_id))
+            if not cart or cart.user_id != user_id:
+                return Response(
+                    status_code=403,
+                    success=False,
+                    message="No tienes acceso a este carrito",
+                )
+
+            p_model = await t.part.get(str(item.part_id))
+            if p_model and p_model.stock < dto.quantity:
+                return Response(
+                    status_code=400,
+                    success=False,
+                    message="Stock insuficiente",
+                )
+
+            item.quantity = dto.quantity
+            await t.cart_item.update(item)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Cantidad actualizada",
         )
 
     async def clear_cart(self, user_id: UUID) -> Response:
