@@ -301,7 +301,7 @@ class AdminRouter(BaseRouter):
             )
 
         # --- Open Orders Check (for delete protection) ---
-        @self._router.get("/users/{id}/open-orders", response_model=CoreResponse)
+        @self._router.get("/users/{id}/open-orders")
         async def user_open_orders(
             id: UUID,
             _: CurrentUser = Depends(require_admin),
@@ -310,7 +310,7 @@ class AdminRouter(BaseRouter):
                 count = await _count_open_orders(session, "users", id)
             return CoreResponse(success=True, status_code=200, content={"open_orders": count})
 
-        @self._router.get("/workshops/{id}/open-orders", response_model=CoreResponse)
+        @self._router.get("/workshops/{id}/open-orders")
         async def workshop_open_orders(
             id: UUID,
             _: CurrentUser = Depends(require_admin),
@@ -319,7 +319,7 @@ class AdminRouter(BaseRouter):
                 count = await _count_open_orders(session, "workshops", id)
             return CoreResponse(success=True, status_code=200, content={"open_orders": count})
 
-        @self._router.get("/vehicles/{id}/open-orders", response_model=CoreResponse)
+        @self._router.get("/vehicles/{id}/open-orders")
         async def vehicle_open_orders(
             id: UUID,
             _: CurrentUser = Depends(require_admin),
