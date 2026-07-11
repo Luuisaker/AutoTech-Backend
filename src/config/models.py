@@ -22,6 +22,8 @@ class User(Base):
     photo_url: Mapped[str] = mapped_column(String, nullable=True)
     is_suspended: Mapped[int] = mapped_column(Integer, default=0)
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    client_average_rating: Mapped[float] = mapped_column(Float, default=0.0)
+    client_rating_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -149,6 +151,8 @@ class WorkshopService(Base):
     service_type: Mapped[str] = mapped_column(String, nullable=True)
     standard_price_min: Mapped[float] = mapped_column(Float)
     standard_price_max: Mapped[float] = mapped_column(Float)
+    revision_cost_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    revision_cost_max: Mapped[float | None] = mapped_column(Float, nullable=True)
     vehicle_type: Mapped[str] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -263,6 +267,7 @@ class Order(Base):
 
     items = relationship("OrderItem", back_populates="order")
     installments = relationship("Installment", back_populates="order")
+    user = relationship("User")
     vehicle = relationship("Vehicle")
     order_reviews = relationship("OrderReview", back_populates="order")
 
@@ -298,6 +303,8 @@ class Installment(Base):
     reference_number: Mapped[str] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String)  # PENDING, PAID, OVERDUE
     paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rate_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     order = relationship("Order", back_populates="installments")
@@ -509,7 +516,11 @@ class ServiceOrder(Base):
     client_review: Mapped[str] = mapped_column(Text, nullable=True)
     workshop_rating: Mapped[int] = mapped_column(Integer, nullable=True)
     workshop_review: Mapped[str] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    revision: Mapped[float] = mapped_column(Float, nullable=True)
+    is_paid: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -517,3 +528,29 @@ class ServiceOrder(Base):
     workshop = relationship("Workshop", back_populates="service_orders")
     workshop_service = relationship("WorkshopService")
     vehicle = relationship("Vehicle")
+    payments = relationship("ServiceOrderPayment", back_populates="service_order")
+
+
+class ServiceOrderPayment(Base):
+    __tablename__ = "service_order_payments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    service_order_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("service_orders.id")
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    amount: Mapped[float] = mapped_column(Float)
+    payment_method: Mapped[str] = mapped_column(String)
+    reference_number: Mapped[str] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="PENDING_VERIFICATION")
+    paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rate_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    service_order = relationship("ServiceOrder", back_populates="payments")
+    user = relationship("User")

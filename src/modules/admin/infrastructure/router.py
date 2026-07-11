@@ -6,18 +6,18 @@ from sqlalchemy.orm import selectinload
 from src.core.infrastructure.router import BaseRouter
 from src.core.application.base_response import Response as CoreResponse
 from src.config.database import get_session
-from src.config.models import User as UserModel
-from src.config.models import Workshop as WorkshopModel
-from src.config.models import Part as PartModel
-from src.config.models import Vehicle as VehicleModel
-from src.config.models import UserRole as UserRoleModel
 from src.config.models import (
+    User as UserModel,
+    Workshop as WorkshopModel,
+    Part as PartModel,
+    Vehicle as VehicleModel,
+    UserRole as UserRoleModel,
     WorkshopService as WorkshopServiceModel,
+    Order as OrderModel,
+    OrderItem as OrderItemModel,
+    Installment as InstallmentModel,
+    ServiceOrder as ServiceOrderModel,
 )
-from src.config.models import Order as OrderModel
-from src.config.models import OrderItem as OrderItemModel
-from src.config.models import Installment as InstallmentModel
-from src.config.models import ServiceOrder as ServiceOrderModel
 from src.modules.users.infrastructure.auth import CurrentUser
 from src.modules.users.infrastructure.permissions import require_admin
 from src.modules.users.infrastructure.repository import UserRepository
@@ -140,6 +140,89 @@ class AdminUpdateWorkshopRequest(BaseModel):
     is_suspended: int | None = None
 
 
+async def _count_open_orders(session, kind: str, id: UUID) -> int:
+    """Count open orders (parts orders + service orders) tied to a user, workshop or vehicle."""
+    if kind == "users":
+        # Parts orders (buyer)
+        c1 = (
+            await session.execute(
+                select(func.count(OrderModel.id)).where(
+                    OrderModel.user_id == id,
+                    OrderModel.deleted_at.is_(None),
+                    OrderModel.status.not_in(["CLOSED", "CANCELLED", "REFUNDED"]),
+                )
+            )
+        ).scalar() or 0
+        # Parts orders (workshop owner)
+        c2 = (
+            await session.execute(
+                select(func.count(OrderModel.id))
+                .join(OrderItemModel, OrderItemModel.order_id == OrderModel.id)
+                .join(WorkshopModel, WorkshopModel.id == OrderItemModel.workshop_id)
+                .where(
+                    WorkshopModel.owner_id == id,
+                    OrderModel.deleted_at.is_(None),
+                    OrderModel.status.not_in(["CLOSED", "CANCELLED", "REFUNDED"]),
+                )
+            )
+        ).scalar() or 0
+        # Service orders (buyer)
+        c3 = (
+            await session.execute(
+                select(func.count(ServiceOrderModel.id)).where(
+                    ServiceOrderModel.user_id == id,
+                    ServiceOrderModel.status.not_in(["CLOSED", "CANCELLED"]),
+                )
+            )
+        ).scalar() or 0
+        return int(c1 + c2 + c3)
+    if kind == "workshops":
+        # Parts orders
+        c1 = (
+            await session.execute(
+                select(func.count(OrderModel.id))
+                .join(OrderItemModel, OrderItemModel.order_id == OrderModel.id)
+                .where(
+                    OrderItemModel.workshop_id == id,
+                    OrderModel.deleted_at.is_(None),
+                    OrderModel.status.not_in(["CLOSED", "CANCELLED", "REFUNDED"]),
+                )
+            )
+        ).scalar() or 0
+        # Service orders
+        c2 = (
+            await session.execute(
+                select(func.count(ServiceOrderModel.id)).where(
+                    ServiceOrderModel.workshop_id == id,
+                    ServiceOrderModel.status.not_in(["CLOSED", "CANCELLED"]),
+                )
+            )
+        ).scalar() or 0
+        return int(c1 + c2)
+    if kind == "vehicles":
+        # Service orders
+        c1 = (
+            await session.execute(
+                select(func.count(ServiceOrderModel.id)).where(
+                    ServiceOrderModel.vehicle_id == id,
+                    ServiceOrderModel.status.not_in(["CLOSED", "CANCELLED"]),
+                )
+            )
+        ).scalar() or 0
+        # Parts orders
+        c2 = (
+            await session.execute(
+                select(func.count(OrderModel.id)).where(
+                    OrderModel.vehicle_id == id,
+                    OrderModel.deleted_at.is_(None),
+                    OrderModel.status.not_in(["CLOSED", "CANCELLED", "REFUNDED"]),
+                )
+            )
+        ).scalar() or 0
+        return int(c1 + c2)
+    return 0
+
+
 class AdminRouter(BaseRouter):
     __prefix__ = "/admin"
     __tag__ = "Admin"
@@ -216,6 +299,34 @@ class AdminRouter(BaseRouter):
                     total_financed=total_financed,
                 ),
             )
+
+        # --- Open Orders Check (for delete protection) ---
+        @self._router.get("/users/{id}/open-orders", response_model=CoreResponse)
+        async def user_open_orders(
+            id: UUID,
+            _: CurrentUser = Depends(require_admin),
+        ):
+            async with get_session() as session:
+                count = await _count_open_orders(session, "users", id)
+            return CoreResponse(success=True, status_code=200, content={"open_orders": count})
+
+        @self._router.get("/workshops/{id}/open-orders", response_model=CoreResponse)
+        async def workshop_open_orders(
+            id: UUID,
+            _: CurrentUser = Depends(require_admin),
+        ):
+            async with get_session() as session:
+                count = await _count_open_orders(session, "workshops", id)
+            return CoreResponse(success=True, status_code=200, content={"open_orders": count})
+
+        @self._router.get("/vehicles/{id}/open-orders", response_model=CoreResponse)
+        async def vehicle_open_orders(
+            id: UUID,
+            _: CurrentUser = Depends(require_admin),
+        ):
+            async with get_session() as session:
+                count = await _count_open_orders(session, "vehicles", id)
+            return CoreResponse(success=True, status_code=200, content={"open_orders": count})
 
         # --- Earnings ---
 
@@ -570,6 +681,12 @@ case(
                 user = await repo.get(str(id))
                 if not user:
                     raise HTTPException(status_code=404, detail="Usuario no encontrado")
+                open_orders = await _count_open_orders(session, "users", id)
+                if open_orders > 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"No se puede eliminar el usuario porque tiene {open_orders} ordenes activas.",
+                    )
                 user.deleted_at = datetime.now(timezone.utc)
                 await session.commit()
             return CoreResponse(
@@ -671,6 +788,14 @@ case(
                 workshop = await session.get(WorkshopModel, id)
                 if not workshop:
                     raise HTTPException(status_code=404, detail="Taller no encontrado")
+
+                # Check for open orders
+                open_orders = await _count_open_orders(session, "workshops", id)
+                if open_orders > 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No se puede eliminar el taller porque tiene órdenes activas.",
+                    )
 
                 now = datetime.now(timezone.utc)
                 workshop.deleted_at = now
@@ -953,23 +1078,35 @@ case(
                         selectinload(ServiceOrderModel.workshop_service),
                         selectinload(ServiceOrderModel.workshop),
                         selectinload(ServiceOrderModel.vehicle),
+                        selectinload(ServiceOrderModel.user),
                     )
                     .join(WorkshopModel, ServiceOrderModel.workshop_id == WorkshopModel.id)
                     .join(VehicleModel, ServiceOrderModel.vehicle_id == VehicleModel.id)
+                    .join(UserModel, ServiceOrderModel.user_id == UserModel.id)
                 )
-                
+
                 # Apply filters
                 if search:
                     stmt = stmt.where(
                         (ServiceOrderModel.id.ilike(f"%{search}%")) |
                         (WorkshopModel.name.ilike(f"%{search}%")) |
                         (VehicleModel.brand.ilike(f"%{search}%")) |
-                        (VehicleModel.model.ilike(f"%{search}%"))
+                        (VehicleModel.model.ilike(f"%{search}%")) |
+                        (UserModel.first_name.ilike(f"%{search}%")) |
+                        (UserModel.last_name.ilike(f"%{search}%")) |
+                        (UserModel.ci.ilike(f"%{search}%"))
                     )
-                
+
                 if status:
-                    stmt = stmt.where(ServiceOrderModel.status == status)
-                
+                    status_groups = {
+                        "activo": ["PENDING", "AT_WORKSHOP", "QUOTED", "REJECTED", "ACCEPTED", "IN_PROGRESS", "COMPLETED", "SHIPPED", "DELIVERED"],
+                        "finalizado": ["CLOSED", "CANCELLED"],
+                    }
+                    if status in status_groups:
+                        stmt = stmt.where(ServiceOrderModel.status.in_(status_groups[status]))
+                    else:
+                        stmt = stmt.where(ServiceOrderModel.status == status)
+
                 stmt = (
                     stmt
                     .offset(offset)
@@ -991,6 +1128,9 @@ case(
                             workshop_name=o.workshop.name if o.workshop else "",
                             vehicle_brand=o.vehicle.brand if o.vehicle else "",
                             vehicle_model=o.vehicle.model if o.vehicle else "",
+                            owner_first_name=o.user.first_name if o.user else None,
+                            owner_last_name=o.user.last_name if o.user else None,
+                            owner_ci=o.user.ci if o.user else None,
                             status=o.status,
                             base_price=o.base_price,
                             final_price=o.final_price,
@@ -1045,6 +1185,15 @@ case(
                     raise HTTPException(
                         status_code=404, detail="Vehículo no encontrado"
                     )
+
+                # Check for open orders
+                open_orders = await _count_open_orders(session, "vehicles", id)
+                if open_orders > 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No se puede eliminar el vehículo porque tiene órdenes activas.",
+                    )
+
                 vehicle.deleted_at = datetime.now(timezone.utc)
                 await session.commit()
 

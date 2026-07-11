@@ -58,6 +58,12 @@ class OrderDTO(BaseModel):
     shipped_at: datetime | None
     workshop_name: str | None
     workshop_id: str | None
+    workshop_rif: str | None
+    workshop_address: str | None
+    user_first_name: str
+    user_last_name: str
+    user_ci: str
+    user_email: str
     items: list[OrderItemDTO]
     closed_by_client: bool = False
     closed_by_workshop: bool = False
@@ -80,6 +86,8 @@ class InstallmentDTO(BaseModel):
     reference_number: str | None = None
     status: str
     paid_at: datetime | None
+    rate: float | None = None
+    rate_date: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -91,6 +99,8 @@ class InstallmentListDTO(BaseModel):
 class PayInstallmentRequest(BaseModel):
     payment_method: str = Field(..., pattern="BANK_TRANSFER|MOBILE_PAYMENT|CASH|OTHER")
     reference_number: str = Field(..., min_length=1, max_length=100)
+    rate: float | None = None
+    rate_date: datetime | None = None
 
 
 class MarkInstallmentPaidRequest(BaseModel):
@@ -115,6 +125,7 @@ class WorkshopOrderDTO(BaseModel):
     confirmed_at: datetime | None
     closed_by_client: bool = False
     closed_by_workshop: bool = False
+    has_pending_verification: bool = False
     items: list[OrderItemDTO]
     created_at: datetime
     ratings: OrderRatingInfo = Field(default_factory=OrderRatingInfo)

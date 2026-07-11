@@ -13,3 +13,5 @@ class User(Entity):
     phone: str
     photo_url: str | None = None
     is_suspended: int = 0
+    client_average_rating: float = 0.0
+    client_rating_count: int = 0

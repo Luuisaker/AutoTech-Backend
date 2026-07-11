@@ -138,11 +138,11 @@ class OrderService:
                         message=f"Stock insuficiente para {p_model.name}",
                     )
                 w_model = await t.workshop.get(str(p_model.workshop_id))
-                if not w_model or not w_model.is_certified:
+                if not w_model or not w_model.is_certified or w_model.is_suspended:
                     return Response(
                         status_code=400,
                         success=False,
-                        message=f"El taller de {p_model.name} no está certificado",
+                        message=f"El taller de {p_model.name} no está disponible",
                     )
                 if str(p_model.workshop_id) == str(user_id):
                     return Response(
@@ -214,13 +214,13 @@ class OrderService:
                         pct = (
                             cfg.down_payment_percentage
                             if cfg.down_payment_percentage is not None
-                            else 100
+                            else p.installment_min_percentage or 20
                         )
                         item_dp = round(p.price * ci.quantity * (pct / 100.0), 2)
                         item_down_payments[ci.id] = item_dp
                     group_down_payment = sum(item_down_payments.values())
                     group_financed_amount = round(group_total - group_down_payment, 2)
-                    group_status = "PENDING_VERIFICATION" if group_any_installments else "PENDING_VERIFICATION"
+                    group_status = "PENDING_VERIFICATION" if group_any_installments else "PENDING"
                 else:
                     group_status = "PENDING_VERIFICATION"
 
@@ -379,6 +379,9 @@ class OrderService:
                     delivery_address=o.delivery_address, delivery_fee=o.delivery_fee,
                     reference_number=o.reference_number, confirmed_at=o.confirmed_at,
                     closed_by_client=bool(o.closed_by_client), closed_by_workshop=bool(o.closed_by_workshop),
+                    has_pending_verification=any(
+                        inst.status == "PENDING_VERIFICATION" for inst in o.installments
+                    ),
                     items=[
                         OrderItemDTO(id=i.id, part_id=i.part_id, workshop_id=i.workshop_id,
                             part_name=i.part_name or "", quantity=i.quantity, unit_price=i.unit_price)
@@ -501,6 +504,8 @@ class OrderService:
             inst_model.status = "PENDING_VERIFICATION"
             inst_model.payment_method = dto.payment_method
             inst_model.reference_number = dto.reference_number
+            inst_model.rate = dto.rate
+            inst_model.rate_date = dto.rate_date
             await t.installment.update(inst_model)
 
             # Get first workshop from order items for receiver
@@ -535,6 +540,8 @@ class OrderService:
                 reference_number=inst_model.reference_number,
                 status=inst_model.status,
                 paid_at=inst_model.paid_at,
+                rate=inst_model.rate,
+                rate_date=inst_model.rate_date,
             ),
         )
 
@@ -602,6 +609,15 @@ class OrderService:
                 inst_model.paid_at = datetime.now(timezone.utc)
             if dto.reference_number:
                 inst_model.reference_number = dto.reference_number
+            
+            # Si no tiene tasa BCV, obtener la histórica para la fecha de pago
+            if inst_model.rate is None:
+                from src.modules.orders.infrastructure.bcv import get_bcv_rate_for_date
+                rate_info = await get_bcv_rate_for_date(inst_model.paid_at)
+                if rate_info:
+                    inst_model.rate = rate_info.usd
+                    inst_model.rate_date = rate_info.date
+            
             await t.installment.update(inst_model)
 
             # Update transaction to COMPLETED if exists
@@ -656,6 +672,8 @@ class OrderService:
                     reference_number=inst_model.reference_number,
                     status=inst_model.status,
                     paid_at=inst_model.paid_at,
+                    rate=inst_model.rate,
+                    rate_date=inst_model.rate_date,
                 ),
             )
 
@@ -1091,18 +1109,18 @@ class OrderService:
             )
 
     def _order_to_dto(self, o: OrderModel) -> OrderDTO:
+        first_workshop = None
         first_workshop_name = None
         first_workshop_id = None
+        first_workshop_rif = None
+        first_workshop_address = None
         if o.items:
             first_item = o.items[0]
-            first_workshop_name = (
-                first_item.part.workshop.name
-                if first_item.part and first_item.part.workshop
-                else None
-            )
-            first_workshop_id = (
-                str(first_item.workshop_id) if first_item.workshop_id else None
-            )
+            first_workshop = first_item.part.workshop if first_item.part and first_item.part.workshop else None
+            first_workshop_name = first_workshop.name if first_workshop else None
+            first_workshop_id = str(first_item.workshop_id) if first_item.workshop_id else None
+            first_workshop_rif = first_workshop.rif if first_workshop else None
+            first_workshop_address = first_workshop.address if first_workshop else None
 
         try:
             installment_count = len(o.installments) if o.installments else 0
@@ -1142,6 +1160,12 @@ class OrderService:
             shipped_at=o.shipped_at,
             workshop_name=first_workshop_name,
             workshop_id=first_workshop_id,
+            workshop_rif=first_workshop_rif,
+            workshop_address=first_workshop_address,
+            user_first_name=o.user.first_name if o.user else "",
+            user_last_name=o.user.last_name if o.user else "",
+            user_ci=o.user.ci if o.user else "",
+            user_email=o.user.email if o.user else "",
             closed_by_client=bool(o.closed_by_client),
             closed_by_workshop=bool(o.closed_by_workshop),
             items=[
@@ -1194,6 +1218,9 @@ class OrderService:
             confirmed_at=o.confirmed_at,
             closed_by_client=bool(o.closed_by_client),
             closed_by_workshop=bool(o.closed_by_workshop),
+            has_pending_verification=any(
+                inst.status == "PENDING_VERIFICATION" for inst in o.installments
+            ),
             items=[
                 OrderItemDTO(
                     id=i.id,

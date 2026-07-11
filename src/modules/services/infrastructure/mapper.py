@@ -12,6 +12,8 @@ class ServiceMapper(GenericMapper[Service, ServiceModel]):
             service_type=model.service_type,
             standard_price_min=model.standard_price_min,
             standard_price_max=model.standard_price_max,
+            revision_cost_min=model.revision_cost_min,
+            revision_cost_max=model.revision_cost_max,
             vehicle_type=model.vehicle_type,
             created_at=model.created_at,
         )
@@ -24,6 +26,8 @@ class ServiceMapper(GenericMapper[Service, ServiceModel]):
             service_type=entity.service_type,
             standard_price_min=entity.standard_price_min,
             standard_price_max=entity.standard_price_max,
+            revision_cost_min=entity.revision_cost_min,
+            revision_cost_max=entity.revision_cost_max,
             vehicle_type=entity.vehicle_type,
             created_at=entity.created_at,
         )

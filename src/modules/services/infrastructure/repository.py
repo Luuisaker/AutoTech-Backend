@@ -1,4 +1,5 @@
 from typing import Sequence, cast
+import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,19 +9,16 @@ from src.core.infrastructure.sql_repository import GenericSQLRepository
 from src.config.models import WorkshopService as ServiceModel
 from src.config.models import Workshop as WorkshopModel
 from src.config.models import ServiceOrder as ServiceOrderModel
+from src.config.models import ServiceOrderPayment as ServiceOrderPaymentModel
 
 
 class ServiceRepository(GenericSQLRepository[ServiceModel]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session, ServiceModel)
 
-    async def delete(self, record: ServiceModel) -> None:
-        await self._session.delete(record)
-        await self._session.flush()
-
     async def list_by_workshop(self, workshop_id: str) -> Sequence[ServiceModel]:
         condition = cast(ColumnElement[bool], ServiceModel.workshop_id == workshop_id)
-        stmt = select(ServiceModel).where(condition)
+        stmt = select(ServiceModel).where(condition, ServiceModel.deleted_at.is_(None))
         r = await self._session.execute(stmt)
         return r.scalars().all()
 
@@ -37,7 +35,7 @@ class ServiceRepository(GenericSQLRepository[ServiceModel]):
         stmt = select(ServiceModel).join(
             WorkshopModel, ServiceModel.workshop_id == WorkshopModel.id
         )
-        where_clauses: list = []
+        where_clauses: list = [cast(ColumnElement[bool], ServiceModel.deleted_at.is_(None)), cast(ColumnElement[bool], WorkshopModel.is_suspended == 0)]
 
         if certified_only:
             where_clauses.append(
@@ -89,6 +87,7 @@ class ServiceRepository(GenericSQLRepository[ServiceModel]):
         query: str | None = None,
         service_type: str | None = None,
         certified_only: bool = False,
+        workshop_id: uuid.UUID | None = None,
         offset: int = 0,
         limit: int = 100,
     ) -> Sequence[ServiceModel]:
@@ -102,7 +101,7 @@ class ServiceRepository(GenericSQLRepository[ServiceModel]):
             )
             .join(WorkshopModel, ServiceModel.workshop_id == WorkshopModel.id)
         )
-        where_clauses: list = []
+        where_clauses: list = [cast(ColumnElement[bool], ServiceModel.deleted_at.is_(None)), cast(ColumnElement[bool], WorkshopModel.is_suspended == 0)]
 
         if certified_only:
             where_clauses.append(
@@ -126,6 +125,11 @@ class ServiceRepository(GenericSQLRepository[ServiceModel]):
                 )
             )
 
+        if workshop_id:
+            where_clauses.append(
+                cast(ColumnElement[bool], ServiceModel.workshop_id == workshop_id)
+            )
+
         if where_clauses:
             stmt = stmt.where(*where_clauses)
 
@@ -147,12 +151,12 @@ class ServiceOrderRepository(GenericSQLRepository[ServiceOrderModel]):
                 selectinload(ServiceOrderModel.workshop),
                 selectinload(ServiceOrderModel.vehicle),
                 selectinload(ServiceOrderModel.user),
+                selectinload(ServiceOrderModel.payments),
             )
             .where(condition)
         )
         r = await self._session.execute(stmt)
         return r.scalars().first()
-
     async def list_by_user(self, user_id: str) -> Sequence[ServiceOrderModel]:
         condition = cast(ColumnElement[bool], ServiceOrderModel.user_id == user_id)
         stmt = (
@@ -162,12 +166,14 @@ class ServiceOrderRepository(GenericSQLRepository[ServiceOrderModel]):
                 selectinload(ServiceOrderModel.workshop),
                 selectinload(ServiceOrderModel.vehicle),
                 selectinload(ServiceOrderModel.user),
+                selectinload(ServiceOrderModel.payments),
             )
             .where(condition)
             .order_by(ServiceOrderModel.created_at.desc())
         )
         r = await self._session.execute(stmt)
         return r.scalars().all()
+
 
     async def list_by_workshop(self, workshop_id: str) -> Sequence[ServiceOrderModel]:
         condition = cast(ColumnElement[bool], ServiceOrderModel.workshop_id == workshop_id)
@@ -178,9 +184,21 @@ class ServiceOrderRepository(GenericSQLRepository[ServiceOrderModel]):
                 selectinload(ServiceOrderModel.workshop),
                 selectinload(ServiceOrderModel.vehicle),
                 selectinload(ServiceOrderModel.user),
+                selectinload(ServiceOrderModel.payments),
             )
             .where(condition)
             .order_by(ServiceOrderModel.created_at.desc())
         )
+        r = await self._session.execute(stmt)
+        return r.scalars().all()
+
+
+class ServiceOrderPaymentRepository(GenericSQLRepository[ServiceOrderPaymentModel]):
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session, ServiceOrderPaymentModel)
+
+    async def get_by_service_order(self, service_order_id: str) -> Sequence[ServiceOrderPaymentModel]:
+        condition = cast(ColumnElement[bool], ServiceOrderPaymentModel.service_order_id == service_order_id)
+        stmt = select(ServiceOrderPaymentModel).where(condition)
         r = await self._session.execute(stmt)
         return r.scalars().all()

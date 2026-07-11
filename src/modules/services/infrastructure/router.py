@@ -7,7 +7,7 @@ from src.modules.services.infrastructure.service import (
     get_service_service,
 )
 from src.modules.users.infrastructure.auth import get_current_user_id, CurrentUser
-from src.modules.users.infrastructure.permissions import require_workshop_owner
+from src.modules.users.infrastructure.permissions import require_workshop_owner, require_admin
 from src.utils.handle_service_result import handle_service_result
 from src.modules.services.application.create import (
     CreateServiceRequest,
@@ -17,12 +17,15 @@ from src.modules.services.application.create import (
     ServiceWithWorkshopListDTO,
     CreateServiceOrderRequest,
     SetQuoteRequest,
+    SetRevisionRequest,
     UpdateServiceOrderStatusRequest,
     AddExtraChargeRequest,
     MarkServiceShippedRequest,
     RateServiceOrderRequest,
+    PayServiceOrderRequest,
     ServiceOrderDTO,
     ServiceOrderListDTO,
+    AdminServiceOrderDetailDTO,
 )
 
 
@@ -75,6 +78,7 @@ class ServiceRouter(BaseRouter):
             query: str | None = Query(default=None),
             certified_only: bool = Query(default=True),
             service_type: str | None = Query(default=None),
+            workshop_id: UUID | None = Query(default=None),
             offset: int = Query(default=0, ge=0),
             limit: int = Query(default=100, ge=1, le=200),
             service: ServiceService = Depends(get_service_service),
@@ -83,6 +87,7 @@ class ServiceRouter(BaseRouter):
                 query=query,
                 service_type=service_type,
                 certified_only=certified_only,
+                workshop_id=workshop_id,
                 offset=offset,
                 limit=limit,
             )
@@ -194,6 +199,20 @@ class ServiceRouter(BaseRouter):
             handle_service_result(result, response)
             return result
 
+        @self._router.get(
+            "/orders/admin/{order_id}",
+            response_model=CoreResponse[AdminServiceOrderDetailDTO],
+        )
+        async def admin_get_service_order(
+            order_id: UUID,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            current_user: tuple = Depends(require_admin),
+        ):
+            result = await service.admin_get_service_order(order_id)
+            handle_service_result(result, response)
+            return result
+
         @self._router.post(
             "/orders/{order_id}/mark-at-workshop",
             response_model=CoreResponse[ServiceOrderDTO],
@@ -205,6 +224,63 @@ class ServiceRouter(BaseRouter):
             current_user: CurrentUser = Depends(require_workshop_owner),
         ):
             result = await service.mark_at_workshop(order_id, current_user.id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/orders/{order_id}/mark-dropped-off",
+            response_model=CoreResponse[ServiceOrderDTO],
+        )
+        async def mark_dropped_off(
+            order_id: UUID,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.mark_dropped_off(order_id, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/orders/{order_id}/set-revision",
+            response_model=CoreResponse[ServiceOrderDTO],
+        )
+        async def set_revision(
+            order_id: UUID,
+            body: SetRevisionRequest,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.set_revision(order_id, body, current_user.id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/orders/{order_id}/accept-revision",
+            response_model=CoreResponse[ServiceOrderDTO],
+        )
+        async def accept_revision(
+            order_id: UUID,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.accept_revision(order_id, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/orders/{order_id}/reject-revision",
+            response_model=CoreResponse[ServiceOrderDTO],
+        )
+        async def reject_revision(
+            order_id: UUID,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.reject_revision(order_id, user_id)
             handle_service_result(result, response)
             return result
 
@@ -397,6 +473,35 @@ class ServiceRouter(BaseRouter):
             return result
 
         @self._router.post(
+            "/orders/{order_id}/pay",
+            response_model=CoreResponse[ServiceOrderDTO],
+        )
+        async def pay_service_order(
+            order_id: UUID,
+            body: PayServiceOrderRequest,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.pay_service_order(order_id, body, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/orders/{order_id}/confirm-payment",
+            response_model=CoreResponse[ServiceOrderDTO],
+        )
+        async def confirm_service_payment(
+            order_id: UUID,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.confirm_service_payment(order_id, current_user.id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
             "/orders/{order_id}/rate-workshop",
             response_model=CoreResponse[ServiceOrderDTO],
         )
@@ -437,7 +542,9 @@ class ServiceRouter(BaseRouter):
             current_user: CurrentUser = Depends(require_workshop_owner),
         ):
             result = await service.update_service_order_status(
-                order_id, {"status": "IN_PROGRESS"}, current_user.id
+                order_id,
+                UpdateServiceOrderStatusRequest(status="IN_PROGRESS"),
+                current_user.id,
             )
             handle_service_result(result, response)
             return result
@@ -453,7 +560,9 @@ class ServiceRouter(BaseRouter):
             current_user: CurrentUser = Depends(require_workshop_owner),
         ):
             result = await service.update_service_order_status(
-                order_id, {"status": "COMPLETED"}, current_user.id
+                order_id,
+                UpdateServiceOrderStatusRequest(status="COMPLETED"),
+                current_user.id,
             )
             handle_service_result(result, response)
             return result

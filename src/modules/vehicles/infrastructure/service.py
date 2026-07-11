@@ -1,6 +1,7 @@
 from typing import Type
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import Depends
+from sqlalchemy import select, func
 
 from src.core.domain.transaction import GenericTransaction
 from src.core.infrastructure.transaction import get_transaction
@@ -16,6 +17,8 @@ from src.modules.vehicles.application.create import (
 from src.modules.vehicles.domain.entity import Vehicle
 from src.modules.vehicles.domain.types import VehicleType
 from src.modules.vehicles.infrastructure.repository import VehicleRepository
+from src.config.models import ServiceOrder as ServiceOrderModel
+from src.config.models import Order as OrderModel
 
 
 class VehicleService:
@@ -43,12 +46,14 @@ class VehicleService:
                     message="La placa ya está registrada",
                 )
 
-            if await t.vehicle.get_by_vin(dto.vin):
-                return Response(
-                    status_code=400,
-                    success=False,
-                    message="El VIN ya está registrado",
-                )
+            if dto.vin:
+                existing_vin = await t.vehicle.get_by_vin(dto.vin)
+                if existing_vin and existing_vin.owner_id != owner_id:
+                    return Response(
+                        status_code=400,
+                        success=False,
+                        message="El VIN ya está registrado",
+                    )
 
             vehicle_entity = Vehicle(
                 owner_id=owner_id,
@@ -57,7 +62,7 @@ class VehicleService:
                 model=dto.model,
                 year=dto.year,
                 license_plate=dto.license_plate,
-                vin=dto.vin,
+                vin=dto.vin or f"VIN-{uuid4().hex[:12].upper()}",
             )
 
             v_model = await t.vehicle.add(self.__mapper.to_model(vehicle_entity))
@@ -169,9 +174,36 @@ class VehicleService:
                 message="No tienes acceso a este vehículo",
             )
 
-        v_model.is_active = 0
-
         async with self._transaction(vehicle=VehicleRepository) as t:
+            # Check for open service orders
+            open_svc_stmt = (
+                select(func.count(ServiceOrderModel.id))
+                .where(
+                    ServiceOrderModel.vehicle_id == vehicle_id,
+                    ServiceOrderModel.status.not_in(["CLOSED", "CANCELLED"]),
+                )
+            )
+            open_svc_count = (await t.vehicle._session.execute(open_svc_stmt)).scalar() or 0
+
+            # Check for open orders
+            open_orders_stmt = (
+                select(func.count(OrderModel.id))
+                .where(
+                    OrderModel.vehicle_id == vehicle_id,
+                    OrderModel.deleted_at.is_(None),
+                    OrderModel.status.not_in(["CLOSED", "CANCELLED", "REFUNDED"]),
+                )
+            )
+            open_orders_count = (await t.vehicle._session.execute(open_orders_stmt)).scalar() or 0
+
+            if open_svc_count > 0 or open_orders_count > 0:
+                return Response(
+                    status_code=400,
+                    success=False,
+                    message="No se puede eliminar el vehículo porque tiene órdenes abiertas.",
+                )
+
+            v_model.is_active = 0
             await t.vehicle.update(v_model)
 
         return Response(

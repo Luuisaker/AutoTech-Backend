@@ -17,6 +17,8 @@ class UserMapper(GenericMapper[User, UserModel]):
             ci=model.ci,
             phone=model.phone,
             is_suspended=model.is_suspended,
+            client_average_rating=model.client_average_rating,
+            client_rating_count=model.client_rating_count,
             created_at=model.created_at,
         )
 
@@ -30,6 +32,8 @@ class UserMapper(GenericMapper[User, UserModel]):
             last_name=entity.last_name,
             ci=entity.ci,
             phone=entity.phone,
+            client_average_rating=entity.client_average_rating,
+            client_rating_count=entity.client_rating_count,
             created_at=entity.created_at,
         )
         model.roles = [UserRole(role=r, user_id=entity.id) for r in entity.roles]

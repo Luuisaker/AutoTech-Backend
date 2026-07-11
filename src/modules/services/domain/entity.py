@@ -10,4 +10,6 @@ class Service(Entity):
     service_type: str | None = None
     standard_price_min: float = 0.0
     standard_price_max: float = 0.0
+    revision_cost_min: float | None = None
+    revision_cost_max: float | None = None
     vehicle_type: str | None = "ALL"

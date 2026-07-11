@@ -6,8 +6,24 @@ from pydantic import BaseModel, ConfigDict, Field
 class ServiceOrderRatingInfo(BaseModel):
     client_rating: int | None = None
     client_rated: bool = False
+    client_review: str | None = None
     workshop_rating: int | None = None
     workshop_rated: bool = False
+    workshop_review: str | None = None
+
+
+class ServiceOrderPaymentDTO(BaseModel):
+    id: UUID
+    amount: float
+    payment_method: str
+    reference_number: str | None = None
+    status: str
+    paid_at: datetime | None = None
+    rate: float | None = None
+    rate_date: datetime | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CreateServiceRequest(BaseModel):
@@ -17,6 +33,8 @@ class CreateServiceRequest(BaseModel):
     standard_price_min: float = Field(..., ge=0)
     standard_price_max: float = Field(..., ge=0)
     vehicle_type: str | None = "ALL"
+    revision_cost_min: float | None = Field(default=None, ge=0)
+    revision_cost_max: float | None = Field(default=None, ge=0)
 
 
 class UpdateServiceRequest(BaseModel):
@@ -25,6 +43,8 @@ class UpdateServiceRequest(BaseModel):
     standard_price_min: float | None = Field(default=None, ge=0)
     standard_price_max: float | None = Field(default=None, ge=0)
     vehicle_type: str | None = None
+    revision_cost_min: float | None = None
+    revision_cost_max: float | None = None
 
 
 class ServiceDTO(BaseModel):
@@ -35,6 +55,8 @@ class ServiceDTO(BaseModel):
     standard_price_min: float
     standard_price_max: float
     vehicle_type: str | None
+    revision_cost_min: float | None = None
+    revision_cost_max: float | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -69,6 +91,10 @@ class SetQuoteRequest(BaseModel):
     notes: str | None = None
 
 
+class SetRevisionRequest(BaseModel):
+    revision_cost: float = Field(..., ge=0)
+
+
 class UpdateServiceOrderStatusRequest(BaseModel):
     status: str = Field(..., pattern="IN_PROGRESS|COMPLETED|CANCELLED")
 
@@ -81,6 +107,13 @@ class AddExtraChargeRequest(BaseModel):
 class MarkServiceShippedRequest(BaseModel):
     tracking_number: str = Field(..., max_length=100)
     shipping_notes: str | None = Field(default=None, max_length=500)
+
+
+class PayServiceOrderRequest(BaseModel):
+    payment_method: str = Field(..., pattern="BANK_TRANSFER|MOBILE_PAYMENT|CASH|OTHER")
+    reference_number: str | None = None
+    rate: float | None = None
+    rate_date: datetime | None = None
 
 
 class RateServiceOrderRequest(BaseModel):
@@ -96,11 +129,21 @@ class ServiceOrderDTO(BaseModel):
     vehicle_id: UUID
     service_name: str
     workshop_name: str | None
+    workshop_rif: str | None
+    workshop_address: str | None
     vehicle_brand: str
     vehicle_model: str
     vehicle_license_plate: str
     user_first_name: str
     user_last_name: str
+    user_ci: str
+    user_email: str
+    owner_first_name: str | None = None
+    owner_last_name: str | None = None
+    owner_ci: str | None = None
+    owner_email: str | None = None
+    user_client_rating: float | None = None
+    user_client_rating_count: int | None = None
     status: str
     base_price: float
     final_price: float | None
@@ -116,13 +159,26 @@ class ServiceOrderDTO(BaseModel):
     shipped_at: datetime | None = None
     closed_by_client: bool = False
     closed_by_workshop: bool = False
+    revision: float | None = None
+    is_paid: bool = False
     created_at: datetime
     completed_at: datetime | None
     delivered_at: datetime | None
+    payment_status: str | None = None
     ratings: ServiceOrderRatingInfo = Field(default_factory=ServiceOrderRatingInfo)
+    payments: list[ServiceOrderPaymentDTO] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class ServiceOrderListDTO(BaseModel):
     service_orders: list[ServiceOrderDTO]
+
+
+class AdminServiceOrderDetailDTO(ServiceOrderDTO):
+    owner_first_name: str | None = None
+    owner_last_name: str | None = None
+    owner_email: str | None = None
+    owner_ci: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)

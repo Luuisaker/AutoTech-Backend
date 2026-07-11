@@ -14,7 +14,7 @@ class CreateVehicleRequest(Request):
     model: str = Field(..., min_length=1, max_length=64)
     year: int = Field(..., ge=1900, le=2100)
     license_plate: str = Field(..., min_length=4, max_length=15)
-    vin: str = Field(..., min_length=11, max_length=17)
+    vin: str | None = Field(default=None, max_length=17)
 
 
 class UpdateVehicleRequest(Request):

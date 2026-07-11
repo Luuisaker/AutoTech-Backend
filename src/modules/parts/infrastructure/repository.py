@@ -42,7 +42,7 @@ class PartRepository(GenericSQLRepository[PartModel]):
         stmt = select(PartModel).join(
             WorkshopModel, PartModel.workshop_id == WorkshopModel.id
         )
-        where_clauses: list = [cast(ColumnElement[bool], PartModel.is_active == 1), PartModel.deleted_at.is_(None)]
+        where_clauses: list = [cast(ColumnElement[bool], PartModel.is_active == 1), PartModel.deleted_at.is_(None), WorkshopModel.is_suspended == 0]
 
         if certified_only:
             where_clauses.append(

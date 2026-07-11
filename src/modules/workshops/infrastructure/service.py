@@ -1,6 +1,8 @@
 from typing import Type
 from uuid import UUID
+from datetime import datetime, timezone
 from fastapi import Depends
+from sqlalchemy import func as sa_func, select as sa_select
 
 from src.core.domain.transaction import GenericTransaction
 from src.core.infrastructure.transaction import get_transaction
@@ -47,7 +49,13 @@ from src.modules.workshops.infrastructure.repository import (
     WorkshopPaymentMethodRepository,
 )
 from src.modules.users.infrastructure.repository import UserRepository
-from src.config.models import UserRole, OrderReview as OrderReviewModel
+from src.config.models import (
+    UserRole,
+    OrderReview as OrderReviewModel,
+    ServiceOrder as ServiceOrderModel,
+    Order as OrderModel,
+    OrderItem as OrderItemModel,
+)
 
 
 class WorkshopService:
@@ -230,6 +238,59 @@ class WorkshopService:
         async with self._transaction(workshop=WorkshopRepository) as t:
             w_model = await t.workshop.get(str(workshop_id))
 
+            if not w_model:
+                return Response(
+                    status_code=404,
+                    success=False,
+                    message="Taller no encontrado",
+                )
+
+            if w_model.owner_id != owner_id:
+                return Response(
+                    status_code=403,
+                    success=False,
+                    message="No eres el dueño de este taller",
+                )
+
+            open_svc = await t.workshop._session.execute(
+                sa_select(sa_func.count(ServiceOrderModel.id)).where(
+                    ServiceOrderModel.workshop_id == str(workshop_id),
+                    ServiceOrderModel.status.not_in(["CLOSED", "CANCELLED"]),
+                )
+            )
+            open_svc_count = open_svc.scalar() or 0
+
+            open_orders = await t.workshop._session.execute(
+                sa_select(sa_func.count(OrderModel.id))
+                .join(OrderItemModel, OrderItemModel.order_id == OrderModel.id)
+                .where(
+                    OrderItemModel.workshop_id == str(workshop_id),
+                    OrderModel.deleted_at.is_(None),
+                    OrderModel.status.not_in(["CLOSED", "CANCELLED", "REFUNDED"]),
+                )
+            )
+            open_orders_count = open_orders.scalar() or 0
+
+            if open_svc_count > 0 or open_orders_count > 0:
+                return Response(
+                    status_code=400,
+                    success=False,
+                    message="No se puede eliminar el taller porque tiene órdenes activas.",
+                )
+
+            w_model.deleted_at = datetime.now(timezone.utc)
+            await t.workshop.update(w_model)
+
+        return Response(
+            status_code=200,
+            success=True,
+            message="Taller eliminado exitosamente",
+        )
+
+    async def toggle_suspension(self, workshop_id: UUID, owner_id: UUID) -> Response:
+        async with self._transaction(workshop=WorkshopRepository) as t:
+            w_model = await t.workshop.get(str(workshop_id))
+
         if not w_model:
             return Response(
                 status_code=404,
@@ -237,20 +298,24 @@ class WorkshopService:
                 message="Taller no encontrado",
             )
 
-        if w_model.owner_id != owner_id:
+        if str(w_model.owner_id) != str(owner_id):
             return Response(
                 status_code=403,
                 success=False,
                 message="No eres el dueño de este taller",
             )
 
-        async with self._transaction(workshop=WorkshopRepository) as t:
-            await t.workshop.delete(w_model)
+        w_model.is_suspended = 0 if w_model.is_suspended else 1
 
+        async with self._transaction(workshop=WorkshopRepository) as t:
+            w_model = await t.workshop.update(w_model)
+
+        status_text = "fuera de servicio" if w_model.is_suspended else "activo"
         return Response(
             status_code=200,
             success=True,
-            message="Taller eliminado exitosamente",
+            message=f"Taller puesto {status_text} exitosamente",
+            content=WorkshopDTO.model_validate(self.__mapper.to_entity(w_model)),
         )
 
     async def upload_photo(

@@ -256,12 +256,13 @@ class PartService:
                 )
 
             p_model.is_active = 0
+            p_model.deleted_at = datetime.now(timezone.utc)
             await t.part.update(p_model)
 
         return Response(
             status_code=200,
             success=True,
-            message="Producto desactivado exitosamente",
+            message="Producto eliminado exitosamente",
         )
 
     async def purchase(self, dto: PurchasePartRequest, user_id: UUID) -> Response:
@@ -311,11 +312,11 @@ class PartService:
                 )
 
             w_model = await t.workshop.get(str(p_model.workshop_id))
-            if not w_model or not w_model.is_certified:
+            if not w_model or not w_model.is_certified or w_model.is_suspended:
                 return Response(
                     status_code=400,
                     success=False,
-                    message="El taller del producto no está certificado",
+                    message="El taller del producto no está disponible",
                 )
 
             if p_model.workshop_id == user_id:

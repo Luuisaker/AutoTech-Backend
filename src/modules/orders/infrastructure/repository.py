@@ -25,6 +25,7 @@ class OrderRepository(GenericSQLRepository[OrderModel]):
             select(OrderModel)
             .where(condition)
             .options(
+                joinedload(OrderModel.user),
                 joinedload(OrderModel.items).joinedload(OrderItemModel.part).joinedload(PartModel.workshop),
                 joinedload(OrderModel.installments),
                 joinedload(OrderModel.order_reviews),
@@ -43,6 +44,7 @@ class OrderRepository(GenericSQLRepository[OrderModel]):
             .options(
                 joinedload(OrderModel.items).joinedload(OrderItemModel.part).joinedload(PartModel.workshop),
                 joinedload(OrderModel.installments),
+                joinedload(OrderModel.user),
                 joinedload(OrderModel.order_reviews),
             )
         )
@@ -55,6 +57,7 @@ class OrderRepository(GenericSQLRepository[OrderModel]):
             .options(
                 joinedload(OrderModel.items).joinedload(OrderItemModel.part).joinedload(PartModel.workshop),
                 joinedload(OrderModel.installments),
+                joinedload(OrderModel.user),
                 joinedload(OrderModel.order_reviews),
             )
             .join(OrderItemModel, OrderItemModel.order_id == OrderModel.id)

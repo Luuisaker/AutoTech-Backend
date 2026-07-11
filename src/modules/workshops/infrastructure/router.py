@@ -168,6 +168,21 @@ class WorkshopRouter(BaseRouter):
             handle_service_result(result, response)
             return result
 
+        @self._router.post(
+            "/{id}/toggle-suspension",
+            response_model=CoreResponse[WorkshopDTO],
+            status_code=200,
+        )
+        async def toggle_workshop_suspension(
+            id: UUID,
+            response: Response,
+            service: WorkshopService = Depends(get_workshop_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.toggle_suspension(id, user_id)
+            handle_service_result(result, response)
+            return result
+
         @self._router.post("/{id}/photo", response_model=CoreResponse[WorkshopDTO])
         async def upload_workshop_photo(
             id: UUID,
