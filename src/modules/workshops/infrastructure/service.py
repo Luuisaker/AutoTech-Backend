@@ -49,6 +49,7 @@ from src.modules.workshops.infrastructure.repository import (
     WorkshopPaymentMethodRepository,
 )
 from src.modules.users.infrastructure.repository import UserRepository
+from src.modules.users.infrastructure.auth import ROLE_NAME_TO_UUID, ROLE_UUID_TO_NAME
 from src.config.models import (
     UserRole,
     OrderReview as OrderReviewModel,
@@ -101,10 +102,11 @@ class WorkshopService:
             w_model = await t.workshop.add(self.__mapper.to_model(workshop_entity))
 
             owner = await t.user.get(str(owner_id))
-            if owner and "ADMIN" not in [ur.role for ur in owner.roles]:
-                if not any(ur.role == "WORKSHOP_OWNER" for ur in owner.roles):
+            owner_role_names = [ROLE_UUID_TO_NAME.get(str(ur.role_id), "CLIENT") for ur in owner.roles] if owner else []
+            if owner and "ADMIN" not in owner_role_names:
+                if not any(r == "WORKSHOP_OWNER" for r in owner_role_names):
                     owner.roles.append(
-                        UserRole(role="WORKSHOP_OWNER", user_id=owner.id)
+                        UserRole(role_id=ROLE_NAME_TO_UUID["WORKSHOP_OWNER"], user_id=owner.id)
                     )
                     await t.user.update(owner)
 
@@ -305,6 +307,14 @@ class WorkshopService:
                 message="No eres el dueño de este taller",
             )
 
+        # Prevent reactivating workshop if commissions are unpaid
+        if w_model.commission_suspended and w_model.is_suspended:
+            return Response(
+                status_code=403,
+                success=False,
+                message="El taller está suspendido por comisiones impagas. Paga las comisiones pendientes para reactivarlo automáticamente.",
+            )
+
         w_model.is_suspended = 0 if w_model.is_suspended else 1
 
         async with self._transaction(workshop=WorkshopRepository) as t:
@@ -413,10 +423,11 @@ class WorkshopService:
             w_model.is_certified = 1
 
             owner = await t.user.get(str(w_model.owner_id))
-            if owner and "ADMIN" not in [ur.role for ur in owner.roles]:
-                if not any(ur.role == "WORKSHOP_OWNER" for ur in owner.roles):
+            owner_role_names = [ROLE_UUID_TO_NAME.get(str(ur.role_id), "CLIENT") for ur in owner.roles] if owner else []
+            if owner and "ADMIN" not in owner_role_names:
+                if not any(r == "WORKSHOP_OWNER" for r in owner_role_names):
                     owner.roles.append(
-                        UserRole(role="WORKSHOP_OWNER", user_id=owner.id)
+                        UserRole(role_id=ROLE_NAME_TO_UUID["WORKSHOP_OWNER"], user_id=owner.id)
                     )
                 await t.user.update(owner)
 
@@ -771,6 +782,7 @@ class WorkshopService:
             account_holder=dto.account_holder,
             phone_number=dto.phone_number,
             holder_ci=dto.holder_ci,
+            email=dto.email,
         )
 
         async with self._transaction(
@@ -851,6 +863,8 @@ class WorkshopService:
                 m_model.phone_number = dto.phone_number
             if dto.holder_ci is not None:
                 m_model.holder_ci = dto.holder_ci
+            if dto.email is not None:
+                m_model.email = dto.email
             if dto.is_active is not None:
                 m_model.is_active = dto.is_active
 

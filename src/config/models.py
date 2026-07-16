@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Text, UniqueConstraint
+from sqlalchemy import String, Integer, Float, ForeignKey, DateTime, Text, UniqueConstraint, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -24,6 +24,15 @@ class User(Base):
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     client_average_rating: Mapped[float] = mapped_column(Float, default=0.0)
     client_rating_count: Mapped[int] = mapped_column(Integer, default=0)
+    credit_level: Mapped[int] = mapped_column(Integer, default=1)
+    parts_credit_limit: Mapped[float] = mapped_column(Float, default=150.0)
+    service_credit_limit: Mapped[float] = mapped_column(Float, default=50.0)
+    credit_points: Mapped[float] = mapped_column(Float, default=0.0)
+    total_parts_debt: Mapped[float] = mapped_column(Float, default=0.0)
+    total_service_debt: Mapped[float] = mapped_column(Float, default=0.0)
+    totp_secret: Mapped[str] = mapped_column(String, nullable=True)
+    is_2fa_enabled: Mapped[int] = mapped_column(Integer, default=0)
+    language_preference: Mapped[str] = mapped_column(String(5), default="es")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -36,6 +45,23 @@ class User(Base):
     service_orders = relationship("ServiceOrder", back_populates="user")
 
 
+class Role(Base):
+    __tablename__ = "roles"
+    __table_args__ = (
+        CheckConstraint(
+            "name IN ('CLIENT', 'WORKSHOP_OWNER', 'ADMIN', 'SUPERADMIN')",
+            name="ck_roles_valid_name",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String, unique=True)
+
+    users = relationship("UserRole", back_populates="role")
+
+
 class UserRole(Base):
     __tablename__ = "user_roles"
 
@@ -43,9 +69,10 @@ class UserRole(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
-    role: Mapped[str] = mapped_column(String)  # CLIENT, WORKSHOP_OWNER, ADMIN
+    role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id"))
 
     user = relationship("User", back_populates="roles")
+    role = relationship("Role", back_populates="users")
 
 
 class Vehicle(Base):
@@ -89,6 +116,7 @@ class Workshop(Base):
     is_certified: Mapped[int] = mapped_column(Integer, default=0)
     was_certified: Mapped[int] = mapped_column(Integer, default=0)
     is_suspended: Mapped[int] = mapped_column(Integer, default=0)
+    commission_suspended: Mapped[int] = mapped_column(Integer, default=0)
     average_rating: Mapped[float] = mapped_column(Float, default=0.0)
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -246,7 +274,7 @@ class Order(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
-    vehicle_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("vehicles.id"))
+    vehicle_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("vehicles.id"), nullable=True)
     mileage: Mapped[int] = mapped_column(Integer, default=0)
     total_amount: Mapped[float] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String)  # PENDING, PENDING_CONFIRMATION, PAID, FINANCED, CLOSED, CANCELLED
@@ -305,6 +333,7 @@ class Installment(Base):
     paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     rate_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    points_eligible_amount: Mapped[float] = mapped_column(Float, default=0.0)
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     order = relationship("Order", back_populates="installments")
@@ -468,12 +497,13 @@ class WorkshopPaymentMethod(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
-    type: Mapped[str] = mapped_column(String)  # bank_transfer, mobile_payment, cash
+    type: Mapped[str] = mapped_column(String)  # bank_transfer, mobile_payment, cash, zelle, zinli
     bank_name: Mapped[str] = mapped_column(String, nullable=True)
     account_number: Mapped[str] = mapped_column(String, nullable=True)
     account_holder: Mapped[str] = mapped_column(String, nullable=True)
     phone_number: Mapped[str] = mapped_column(String, nullable=True)
     holder_ci: Mapped[str] = mapped_column(String, nullable=True)
+    email: Mapped[str] = mapped_column(String, nullable=True)
     is_active: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -518,6 +548,8 @@ class ServiceOrder(Base):
     workshop_review: Mapped[str] = mapped_column(Text, nullable=True)
     revision: Mapped[float] = mapped_column(Float, nullable=True)
     is_paid: Mapped[int] = mapped_column(Integer, default=0)
+    is_financed: Mapped[int] = mapped_column(Integer, default=0)
+    down_payment_pct: Mapped[float] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -529,6 +561,7 @@ class ServiceOrder(Base):
     workshop_service = relationship("WorkshopService")
     vehicle = relationship("Vehicle")
     payments = relationship("ServiceOrderPayment", back_populates="service_order")
+    installments = relationship("ServiceOrderInstallment", back_populates="service_order")
 
 
 class ServiceOrderPayment(Base):
@@ -554,3 +587,158 @@ class ServiceOrderPayment(Base):
 
     service_order = relationship("ServiceOrder", back_populates="payments")
     user = relationship("User")
+
+
+class CreditLevel(Base):
+    __tablename__ = "credit_levels"
+
+    level: Mapped[int] = mapped_column(Integer, primary_key=True)
+    points_required: Mapped[float] = mapped_column(Float, default=0.0)
+    credit_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    min_down_payment_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    base_parts_limit: Mapped[float] = mapped_column(Float, default=150.0)
+
+
+class CreditHistory(Base):
+    __tablename__ = "credit_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    type: Mapped[str] = mapped_column(String)  # PURCHASE, PAYMENT, PENALTY, LEVEL_CHANGE, ADMIN_ADJUST
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    parts_line_used: Mapped[float] = mapped_column(Float, default=0.0)
+    service_line_used: Mapped[float] = mapped_column(Float, default=0.0)
+    description: Mapped[str] = mapped_column(Text)
+    reference_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CreditLimitReview(Base):
+    __tablename__ = "credit_limit_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String, default="PENDING")  # PENDING, APPROVED, REJECTED
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    reviewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    reviewer = relationship("User", foreign_keys=[reviewed_by])
+
+
+class ServiceOrderInstallment(Base):
+    __tablename__ = "service_order_installments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    service_order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("service_orders.id"))
+    amount: Mapped[float] = mapped_column(Float)
+    due_date: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    payment_method: Mapped[str] = mapped_column(String, default="OTHER")
+    reference_number: Mapped[str] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="PENDING")  # PENDING, PENDING_VERIFICATION, PAID, OVERDUE
+    paid_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rate_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    points_eligible_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    service_order = relationship("ServiceOrder", back_populates="installments")
+
+
+class LateFee(Base):
+    __tablename__ = "late_fees"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    installment_type: Mapped[str] = mapped_column(String(20))  # 'PARTS' | 'SERVICE'
+    installment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    amount: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING")  # PENDING, PENDING_VERIFICATION, PAID, WAIVED, ERRONEOUS
+    payment_method: Mapped[str] = mapped_column(String, default="OTHER")
+    reference_number: Mapped[str | None] = mapped_column(String, nullable=True)
+    rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rate_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    erroneous_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class WorkshopCommission(Base):
+    __tablename__ = "workshop_commissions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    workshop_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workshops.id"))
+    order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
+    service_order_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("service_orders.id"), nullable=True)
+    financed_amount: Mapped[float] = mapped_column(Float)
+    commission_rate: Mapped[float] = mapped_column(Float, default=5.0)
+    commission_amount: Mapped[float] = mapped_column(Float)
+    period_month: Mapped[int] = mapped_column(Integer)
+    period_year: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String, default="PENDING")
+    payment_method: Mapped[str | None] = mapped_column(String, nullable=True)
+    reference_number: Mapped[str | None] = mapped_column(String, nullable=True)
+    rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rate_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    workshop = relationship("Workshop")
+
+
+class TrustedDevice(Base):
+    __tablename__ = "trusted_devices"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    device_id: Mapped[str] = mapped_column(String, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AdminPaymentMethod(Base):
+    __tablename__ = "admin_payment_methods"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    label: Mapped[str] = mapped_column(String(100))
+    method_type: Mapped[str] = mapped_column(String(30))  # BANK_TRANSFER, MOBILE_PAYMENT, ZELLE, BINANCE, OTHER
+    bank_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    account_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    holder_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    holder_ci: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    is_active: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

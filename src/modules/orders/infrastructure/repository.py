@@ -2,7 +2,7 @@ from typing import Sequence, cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from src.core.infrastructure.sql_repository import GenericSQLRepository
 from src.config.models import Order as OrderModel
@@ -25,17 +25,16 @@ class OrderRepository(GenericSQLRepository[OrderModel]):
             select(OrderModel)
             .where(condition)
             .options(
-                joinedload(OrderModel.user),
-                joinedload(OrderModel.items).joinedload(OrderItemModel.part).joinedload(PartModel.workshop),
-                joinedload(OrderModel.installments),
-                joinedload(OrderModel.order_reviews),
+                selectinload(OrderModel.items).selectinload(OrderItemModel.part).selectinload(PartModel.workshop),
+                selectinload(OrderModel.installments),
+                selectinload(OrderModel.order_reviews),
             )
             .order_by(OrderModel.created_at.desc())
             .limit(limit)
             .offset(offset)
         )
         r = await self._session.execute(stmt)
-        return r.unique().scalars().all()
+        return r.scalars().all()
 
     async def get_with_items(self, order_id: str) -> OrderModel | None:
         stmt = (
@@ -55,17 +54,18 @@ class OrderRepository(GenericSQLRepository[OrderModel]):
         stmt = (
             select(OrderModel)
             .options(
-                joinedload(OrderModel.items).joinedload(OrderItemModel.part).joinedload(PartModel.workshop),
-                joinedload(OrderModel.installments),
-                joinedload(OrderModel.user),
-                joinedload(OrderModel.order_reviews),
+                selectinload(OrderModel.items).selectinload(OrderItemModel.part).selectinload(PartModel.workshop),
+                selectinload(OrderModel.installments),
+                selectinload(OrderModel.user),
+                selectinload(OrderModel.order_reviews),
             )
             .join(OrderItemModel, OrderItemModel.order_id == OrderModel.id)
             .where(cast(ColumnElement[bool], OrderItemModel.workshop_id == workshop_id))
             .order_by(OrderModel.created_at.desc())
+            .distinct()
         )
         r = await self._session.execute(stmt)
-        return r.unique().scalars().all()
+        return r.scalars().all()
 
 
 class OrderItemRepository(GenericSQLRepository[OrderItemModel]):

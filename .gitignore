@@ -6,10 +6,11 @@ __pycache__/
 # C extensions
 *.so
 
+
 # Distribution / packaging
 .Python
 build/
-alembic/
+# alembic/
 develop-eggs/
 dist/
 downloads/
@@ -26,6 +27,19 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+# image 
+uploads/vehicle_photos/*
+!uploads/vehicle_photos/.gitkeep
+
+uploads/workshop_photos/*
+!uploads/workshop_photos/.gitkeep
+
+uploads/profile_photos/*
+!uploads/profile_photos/.gitkeep
+
+uploads/part_photos/*
+!uploads/part_photos/.gitkeep
 
 # PyInstaller
 #   Usually these files are written by a python script from a template
@@ -223,3 +237,7 @@ __marimo__/
 # Agent files
 AGENTS.md
 graphify-out/
+
+# Local DB scripts (not for repo)
+reset_render_db.py
+drop_all_tables.py

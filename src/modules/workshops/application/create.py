@@ -130,21 +130,23 @@ class WorkshopBankListDTO(BaseModel):
 
 
 class CreatePaymentMethodRequest(BaseModel):
-    type: str = Field(..., pattern="bank_transfer|mobile_payment|cash")
+    type: str = Field(..., pattern="bank_transfer|mobile_payment|cash|zelle|zinli")
     bank_name: str | None = None
     account_number: str | None = None
     account_holder: str | None = None
     phone_number: str | None = None
     holder_ci: str | None = None
+    email: str | None = None
 
 
 class UpdatePaymentMethodRequest(BaseModel):
-    type: str | None = Field(default=None, pattern="bank_transfer|mobile_payment|cash")
+    type: str | None = Field(default=None, pattern="bank_transfer|mobile_payment|cash|zelle|zinli")
     bank_name: str | None = None
     account_number: str | None = None
     account_holder: str | None = None
     phone_number: str | None = None
     holder_ci: str | None = None
+    email: str | None = None
     is_active: int | None = Field(default=None, ge=0, le=1)
 
 
@@ -157,6 +159,7 @@ class PaymentMethodDTO(BaseModel):
     account_holder: str | None
     phone_number: str | None
     holder_ci: str | None
+    email: str | None = None
     is_active: int
     created_at: datetime
 

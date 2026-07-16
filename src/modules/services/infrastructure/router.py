@@ -23,6 +23,10 @@ from src.modules.services.application.create import (
     MarkServiceShippedRequest,
     RateServiceOrderRequest,
     PayServiceOrderRequest,
+    FinanceServiceOrderRequest,
+    AcceptQuoteRequest,
+    PayServiceInstallmentRequest,
+    MarkServiceInstallmentPaidRequest,
     ServiceOrderDTO,
     ServiceOrderListDTO,
     AdminServiceOrderDetailDTO,
@@ -305,11 +309,12 @@ class ServiceRouter(BaseRouter):
         )
         async def accept_quote(
             order_id: UUID,
-            response: Response,
+            body: AcceptQuoteRequest | None = None,
+            response: Response = None,
             service: ServiceService = Depends(get_service_service),
             user_id: UUID = Depends(get_current_user_id),
         ):
-            result = await service.accept_quote(order_id, user_id)
+            result = await service.accept_quote(order_id, user_id, body)
             handle_service_result(result, response)
             return result
 
@@ -484,6 +489,65 @@ class ServiceRouter(BaseRouter):
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.pay_service_order(order_id, body, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/orders/{order_id}/finance",
+            response_model=CoreResponse[ServiceOrderDTO],
+        )
+        async def finance_service_order(
+            order_id: UUID,
+            body: FinanceServiceOrderRequest,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.finance_service_order(order_id, body, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/installments/{installment_id}/pay",
+            response_model=CoreResponse[ServiceOrderDTO],
+        )
+        async def pay_service_installment(
+            installment_id: UUID,
+            body: PayServiceInstallmentRequest,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.pay_service_installment(installment_id, body, user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/installments/{installment_id}/mark-paid",
+            response_model=CoreResponse[ServiceOrderDTO],
+        )
+        async def mark_service_installment_paid(
+            installment_id: UUID,
+            body: MarkServiceInstallmentPaidRequest,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.mark_service_installment_paid(installment_id, current_user.id, body)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/installments/{installment_id}/mark-erroneous",
+            response_model=CoreResponse[ServiceOrderDTO],
+        )
+        async def mark_service_installment_erroneous(
+            installment_id: UUID,
+            response: Response,
+            service: ServiceService = Depends(get_service_service),
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            result = await service.mark_service_installment_erroneous(installment_id, current_user.id)
             handle_service_result(result, response)
             return result
 

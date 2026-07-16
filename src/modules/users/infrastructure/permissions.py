@@ -1,13 +1,15 @@
 from fastapi import Depends, HTTPException, status
 
 from src.modules.users.infrastructure.auth import get_current_user, CurrentUser
+from src.modules.users.domain.role import RoleName
 
 
-def require_roles(*roles: str):
+def require_roles(*roles: RoleName):
     async def role_checker(
         current_user: CurrentUser = Depends(get_current_user),
     ) -> CurrentUser:
-        if not set(roles).intersection(current_user.roles):
+        required = {str(r) for r in roles}
+        if not required.intersection(current_user.roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="No tienes permisos para realizar esta acción",
@@ -17,6 +19,7 @@ def require_roles(*roles: str):
     return role_checker
 
 
-require_admin = require_roles("ADMIN")
-require_workshop_owner = require_roles("WORKSHOP_OWNER")
-require_client = require_roles("CLIENT")
+require_admin = require_roles(RoleName.ADMIN, RoleName.SUPERADMIN)
+require_superadmin = require_roles(RoleName.SUPERADMIN)
+require_workshop_owner = require_roles(RoleName.WORKSHOP_OWNER)
+require_client = require_roles(RoleName.CLIENT)

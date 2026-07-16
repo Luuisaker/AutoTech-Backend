@@ -40,10 +40,11 @@ class WorkshopMobilePayment(Entity):
 @dataclass
 class WorkshopPaymentMethod(Entity):
     workshop_id: UUID
-    type: str  # bank_transfer, mobile_payment, cash
+    type: str  # bank_transfer, mobile_payment, cash, zelle, zinli
     bank_name: str | None = None
     account_number: str | None = None
     account_holder: str | None = None
     phone_number: str | None = None
     holder_ci: str | None = None
+    email: str | None = None
     is_active: int = 1

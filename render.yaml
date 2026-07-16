@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: autotech-api
+    runtime: python
+    buildCommand: pip install poetry && poetry install --without dev
+    startCommand: poetry run alembic upgrade head && poetry run uvicorn src.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: autotech-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: UPLOAD_DIR
+        value: /opt/render/project/src/uploads
+      - key: RESEND_API_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CRON_API_KEY
+        generateValue: true
+
+databases:
+  - name: autotech-db
+    plan: free

@@ -26,6 +26,23 @@ class ServiceOrderPaymentDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ServiceOrderInstallmentDTO(BaseModel):
+    id: UUID
+    amount: float
+    due_date: datetime
+    payment_method: str = "OTHER"
+    reference_number: str | None = None
+    status: str
+    paid_at: datetime | None = None
+    rate: float | None = None
+    rate_date: datetime | None = None
+    created_at: datetime
+    late_fee_status: str | None = None
+    late_fee_amount: float | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class CreateServiceRequest(BaseModel):
     workshop_id: UUID
     service_name: str = Field(..., min_length=1, max_length=128)
@@ -106,7 +123,7 @@ class AddExtraChargeRequest(BaseModel):
 
 class MarkServiceShippedRequest(BaseModel):
     tracking_number: str = Field(..., max_length=100)
-    shipping_notes: str | None = Field(default=None, max_length=500)
+    shipping_notes: str = Field(..., max_length=500)
 
 
 class PayServiceOrderRequest(BaseModel):
@@ -114,6 +131,36 @@ class PayServiceOrderRequest(BaseModel):
     reference_number: str | None = None
     rate: float | None = None
     rate_date: datetime | None = None
+    paid_at: datetime | None = None
+
+
+class FinanceServiceOrderRequest(BaseModel):
+    down_payment_pct: float = Field(..., ge=0, le=100)
+    payment_method: str = Field(..., pattern="BANK_TRANSFER|MOBILE_PAYMENT|CASH|OTHER")
+    reference_number: str | None = None
+    rate: float | None = None
+    rate_date: datetime | None = None
+
+
+class AcceptQuoteRequest(BaseModel):
+    is_financed: bool = False
+    down_payment_pct: float | None = Field(default=None, ge=0, le=100)
+    payment_method: str | None = None
+    reference_number: str | None = None
+    rate: float | None = None
+    rate_date: datetime | None = None
+
+
+class PayServiceInstallmentRequest(BaseModel):
+    payment_method: str = Field(..., pattern="BANK_TRANSFER|MOBILE_PAYMENT|CASH|OTHER")
+    reference_number: str | None = None
+    rate: float | None = None
+    rate_date: datetime | None = None
+    paid_at: datetime | None = None
+
+
+class MarkServiceInstallmentPaidRequest(BaseModel):
+    paid_at: datetime | None = None
 
 
 class RateServiceOrderRequest(BaseModel):
@@ -161,12 +208,15 @@ class ServiceOrderDTO(BaseModel):
     closed_by_workshop: bool = False
     revision: float | None = None
     is_paid: bool = False
+    is_financed: bool = False
+    down_payment_pct: float | None = None
     created_at: datetime
     completed_at: datetime | None
     delivered_at: datetime | None
     payment_status: str | None = None
     ratings: ServiceOrderRatingInfo = Field(default_factory=ServiceOrderRatingInfo)
     payments: list[ServiceOrderPaymentDTO] = Field(default_factory=list)
+    installments: list[ServiceOrderInstallmentDTO] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -176,9 +226,4 @@ class ServiceOrderListDTO(BaseModel):
 
 
 class AdminServiceOrderDetailDTO(ServiceOrderDTO):
-    owner_first_name: str | None = None
-    owner_last_name: str | None = None
-    owner_email: str | None = None
-    owner_ci: str | None = None
-
-    model_config = ConfigDict(from_attributes=True)
+    pass

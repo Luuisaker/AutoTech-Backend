@@ -116,6 +116,263 @@ class WorkshopRouter(BaseRouter):
         async def list_banks():
             return WorkshopService.get_banks()
 
+        # -- Workshop Owner Commissions (must be before /{id} to avoid UUID match) --
+
+        @self._router.get("/my-commissions")
+        async def my_commissions(
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            from src.config.database import get_session
+            from src.config.models import Workshop as WorkshopModel, WorkshopCommission as WCModel
+            from sqlalchemy import select
+            from datetime import datetime, timezone
+            import json
+            from fastapi import Response as FastResponse
+
+            async with get_session() as session:
+                ws_stmt = select(WorkshopModel.id, WorkshopModel.name).where(
+                    WorkshopModel.owner_id == current_user.id
+                )
+                ws_r = await session.execute(ws_stmt)
+                workshops = ws_r.all()
+                ws_ids = [w.id for w in workshops]
+                ws_names = {w.id: w.name for w in workshops}
+
+                if not ws_ids:
+                    return FastResponse(
+                        content=json.dumps({"success": True, "status_code": 200, "content": {"commissions": [], "total_pending": 0, "total_paid": 0}}),
+                        media_type="application/json",
+                        status_code=200,
+                    )
+
+                comm_stmt = (
+                    select(WCModel)
+                    .where(WCModel.workshop_id.in_(ws_ids))
+                    .order_by(WCModel.created_at.desc())
+                )
+                r = await session.execute(comm_stmt)
+                commissions = r.scalars().all()
+
+                total_pending = sum(c.commission_amount for c in commissions if c.status in ("PENDING", "PENDING_VERIFICATION"))
+                total_paid = sum(c.commission_amount for c in commissions if c.status == "PAID")
+
+                items = [
+                    {
+                        "id": str(c.id),
+                        "workshop_id": str(c.workshop_id),
+                        "workshop_name": ws_names.get(c.workshop_id, ""),
+                        "order_id": str(c.order_id) if c.order_id else None,
+                        "service_order_id": str(c.service_order_id) if c.service_order_id else None,
+                        "financed_amount": c.financed_amount,
+                        "commission_rate": c.commission_rate,
+                        "commission_amount": c.commission_amount,
+                        "period_month": c.period_month,
+                        "period_year": c.period_year,
+                        "status": c.status,
+                        "created_at": c.created_at.isoformat() if c.created_at else "",
+                        "paid_at": c.paid_at.isoformat() if c.paid_at else None,
+                    }
+                    for c in commissions
+                ]
+
+            return FastResponse(
+                content=json.dumps({"success": True, "status_code": 200, "content": {
+                    "commissions": items,
+                    "total_pending": round(total_pending, 2),
+                    "total_paid": round(total_paid, 2),
+                }}),
+                media_type="application/json",
+                status_code=200,
+            )
+
+        @self._router.patch("/my-commissions/{commission_id}/register-payment", response_model=CoreResponse)
+        async def register_my_commission_payment(
+            commission_id: UUID,
+            body: dict,
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            from src.config.database import get_session
+            from src.config.models import WorkshopCommission as WCModel, Workshop as WorkshopModel
+            from sqlalchemy import select
+
+            async with get_session() as session:
+                commission = await session.get(WCModel, commission_id)
+                if not commission:
+                    raise HTTPException(status_code=404, detail="Comisión no encontrada")
+                # Verify ownership
+                ws = await session.get(WorkshopModel, commission.workshop_id)
+                if not ws or ws.owner_id != current_user.id:
+                    raise HTTPException(status_code=403, detail="No eres dueño de este taller")
+                if commission.status not in ("PENDING",):
+                    raise HTTPException(status_code=400, detail="La comisión no está pendiente de pago")
+
+                commission.status = "PENDING_VERIFICATION"
+                commission.payment_method = body.get("payment_method", "OTHER")
+                commission.reference_number = body.get("reference_number")
+                if body.get("rate") is not None:
+                    commission.rate = body["rate"]
+                if body.get("rate_date"):
+                    try:
+                        from datetime import datetime
+                        commission.rate_date = datetime.fromisoformat(body["rate_date"])
+                    except ValueError:
+                        pass
+                await session.commit()
+
+            # Notify superadmin
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_registered_admin
+                from src.config.models import User as _U, UserRole as _UR
+                from src.modules.users.infrastructure.auth import ROLE_NAME_TO_UUID as _RMAP
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _sa = (await _s.execute(_sel(_U).join(_UR, _UR.user_id == _U.id).where(_UR.role_id == _RMAP["SUPERADMIN"]))).scalars().first()
+                    _owner = (await _s.execute(_sel(_U).where(_U.id == current_user.id))).scalars().first()
+                    if _sa and _owner:
+                        await send_email(
+                            _sa.email,
+                            "Pago de comisión registrado - AutoTech",
+                            payment_registered_admin(
+                                "Comisión de taller",
+                                f"{_owner.first_name} {_owner.last_name}",
+                                commission.commission_amount,
+                                body.get("payment_method", "OTHER"),
+                                body.get("reference_number"),
+                                lang=_sa.language_preference or "es",
+                            ),
+                        )
+            except Exception:
+                pass
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message="Pago registrado. Pendiente de verificación.",
+            )
+
+        @self._router.patch("/my-commissions/workshop/{workshop_id}/register-payment-all", response_model=CoreResponse)
+        async def register_all_my_commissions_payment(
+            workshop_id: UUID,
+            body: dict,
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            from src.config.database import get_session
+            from src.config.models import WorkshopCommission as WCModel, Workshop as WorkshopModel
+            from sqlalchemy import select
+
+            async with get_session() as session:
+                ws = await session.get(WorkshopModel, workshop_id)
+                if not ws or ws.owner_id != current_user.id:
+                    raise HTTPException(status_code=403, detail="No eres dueño de este taller")
+
+                stmt = select(WCModel).where(
+                    WCModel.workshop_id == workshop_id,
+                    WCModel.status == "PENDING",
+                )
+                r = await session.execute(stmt)
+                commissions = r.scalars().all()
+                if not commissions:
+                    raise HTTPException(status_code=400, detail="No hay comisiones pendientes para este taller")
+
+                total_amount = 0
+                for comm in commissions:
+                    comm.status = "PENDING_VERIFICATION"
+                    comm.payment_method = body.get("payment_method", "OTHER")
+                    comm.reference_number = body.get("reference_number")
+                    if body.get("rate") is not None:
+                        comm.rate = body["rate"]
+                    if body.get("rate_date"):
+                        try:
+                            from datetime import datetime
+                            comm.rate_date = datetime.fromisoformat(body["rate_date"])
+                        except ValueError:
+                            pass
+                    total_amount += comm.commission_amount
+                await session.commit()
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message=f"Pago registrado para {len(commissions)} comisiones. Total: ${total_amount:.2f}. Pendiente de verificación.",
+            )
+
+        @self._router.patch("/my-commissions/register-payment-all", response_model=CoreResponse)
+        async def register_all_workshops_commissions_payment(
+            body: dict,
+            current_user: CurrentUser = Depends(require_workshop_owner),
+        ):
+            from src.config.database import get_session
+            from src.config.models import WorkshopCommission as WCModel, Workshop as WorkshopModel
+            from sqlalchemy import select
+
+            async with get_session() as session:
+                ws_stmt = select(WorkshopModel.id).where(WorkshopModel.owner_id == current_user.id)
+                ws_r = await session.execute(ws_stmt)
+                ws_ids = [r[0] for r in ws_r.all()]
+                if not ws_ids:
+                    raise HTTPException(status_code=400, detail="No tienes talleres registrados")
+
+                stmt = select(WCModel).where(
+                    WCModel.workshop_id.in_(ws_ids),
+                    WCModel.status == "PENDING",
+                )
+                r = await session.execute(stmt)
+                commissions = r.scalars().all()
+                if not commissions:
+                    raise HTTPException(status_code=400, detail="No hay comisiones pendientes")
+
+                total_amount = 0
+                for comm in commissions:
+                    comm.status = "PENDING_VERIFICATION"
+                    comm.payment_method = body.get("payment_method", "OTHER")
+                    comm.reference_number = body.get("reference_number")
+                    if body.get("rate") is not None:
+                        comm.rate = body["rate"]
+                    if body.get("rate_date"):
+                        try:
+                            from datetime import datetime
+                            rate_date = datetime.fromisoformat(body["rate_date"])
+                            comm.rate_date = rate_date
+                            comm.paid_at = rate_date
+                        except ValueError:
+                            pass
+                    total_amount += comm.commission_amount
+                await session.commit()
+
+            # Notify superadmin
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_registered_admin
+                from src.config.models import User as _U, UserRole as _UR
+                from src.modules.users.infrastructure.auth import ROLE_NAME_TO_UUID as _RMAP
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _sa = (await _s.execute(_sel(_U).join(_UR, _UR.user_id == _U.id).where(_UR.role_id == _RMAP["SUPERADMIN"]))).scalars().first()
+                    _owner = (await _s.execute(_sel(_U).where(_U.id == current_user.id))).scalars().first()
+                    if _sa and _owner:
+                        await send_email(
+                            _sa.email,
+                            "Pago de comisión registrado - AutoTech",
+                            payment_registered_admin(
+                                "Comisión de taller",
+                                f"{_owner.first_name} {_owner.last_name}",
+                                total_amount,
+                                body.get("payment_method", "OTHER"),
+                                body.get("reference_number"),
+                                lang=_sa.language_preference or "es",
+                            ),
+                        )
+            except Exception as e:
+                import logging
+                logging.error(f"Error sending superadmin commission notification email: {e}")
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message=f"Pago registrado para {len(commissions)} comisiones de todos tus talleres. Total: ${total_amount:.2f}. Pendiente de verificación.",
+            )
+
         @self._router.get("/{id}", response_model=CoreResponse[WorkshopDTO])
         async def get_workshop(
             id: UUID,
@@ -457,3 +714,4 @@ class WorkshopRouter(BaseRouter):
             result = await service.rate_workshop(workshop_id, user_id, body)
             handle_service_result(result, response)
             return result
+

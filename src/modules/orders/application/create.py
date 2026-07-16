@@ -43,7 +43,7 @@ class OrderRatingInfo(BaseModel):
 
 class OrderDTO(BaseModel):
     id: UUID
-    vehicle_id: UUID
+    vehicle_id: UUID | None = None
     total_amount: float
     down_payment: float
     financed_amount: float
@@ -98,13 +98,15 @@ class InstallmentListDTO(BaseModel):
 
 class PayInstallmentRequest(BaseModel):
     payment_method: str = Field(..., pattern="BANK_TRANSFER|MOBILE_PAYMENT|CASH|OTHER")
-    reference_number: str = Field(..., min_length=1, max_length=100)
+    reference_number: str | None = Field(..., min_length=1, max_length=100)
     rate: float | None = None
     rate_date: datetime | None = None
+    paid_at: datetime | None = None
 
 
 class MarkInstallmentPaidRequest(BaseModel):
     reference_number: str | None = Field(default=None, max_length=100)
+    paid_at: datetime | None = None
 
 
 class ConfirmPaymentRequest(BaseModel):
@@ -114,7 +116,7 @@ class ConfirmPaymentRequest(BaseModel):
 class WorkshopOrderDTO(BaseModel):
     id: UUID
     user_id: UUID
-    vehicle_id: UUID
+    vehicle_id: UUID | None = None
     mileage: int
     total_amount: float
     status: str
@@ -144,4 +146,4 @@ class RateOrderRequest(BaseModel):
 
 class MarkShippedRequest(BaseModel):
     tracking_number: str = Field(..., max_length=100)
-    shipping_notes: str | None = Field(default=None, max_length=500)
+    shipping_notes: str = Field(..., max_length=500)

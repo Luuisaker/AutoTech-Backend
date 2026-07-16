@@ -8,7 +8,7 @@ from src.modules.users.infrastructure.service import UserService, get_user_servi
 from src.modules.users.infrastructure.auth import get_current_user_id
 from src.utils.handle_service_result import handle_service_result
 from src.modules.users.application.create import CreateUserRequest, UserDTO
-from src.modules.users.application.login import LoginRequest, TokenResponse
+from src.modules.users.application.login import LoginRequest, TokenResponse, TwoFactorSetupResponse, TwoFactorVerifyRequest
 from src.modules.users.application.update import UpdateUserRequest, ChangePasswordRequest
 
 
@@ -98,6 +98,38 @@ class UserRouter(BaseRouter):
             handle_service_result(result, response)
             return result
 
+        @self._router.post("/me/2fa/setup", response_model=CoreResponse[TwoFactorSetupResponse])
+        async def setup_2fa(
+            response: Response,
+            service: UserService = Depends(get_user_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.setup_2fa(user_id)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post("/me/2fa/verify", response_model=CoreResponse)
+        async def verify_2fa(
+            body: TwoFactorVerifyRequest,
+            response: Response,
+            service: UserService = Depends(get_user_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.verify_2fa(user_id, body.code)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post("/me/2fa/disable", response_model=CoreResponse)
+        async def disable_2fa(
+            body: TwoFactorVerifyRequest,
+            response: Response,
+            service: UserService = Depends(get_user_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.disable_2fa(user_id, body.code)
+            handle_service_result(result, response)
+            return result
+
         @self._router.put("/me/photo", response_model=CoreResponse[UserDTO])
         async def upload_profile_photo(
             photo: UploadFile = File(...),
@@ -105,49 +137,66 @@ class UserRouter(BaseRouter):
             user_id: UUID = Depends(get_current_user_id),
         ):
             from src.utils.file_upload import save_upload_file
-            from src.modules.users.infrastructure.mapper import UserMapper
+            from src.modules.users.infrastructure.user_dto_helper import user_to_dto
             photo_url = await save_upload_file(photo, "profile_photos")
             user_model = await service.update_profile(user_id, photo_url=photo_url)
-            user_entity = UserMapper().to_entity(user_model)
-            return CoreResponse(success=True, status_code=200, message="Foto actualizada", content=UserDTO.model_validate(user_entity))
+            return CoreResponse(success=True, status_code=200, message="Foto actualizada", content=user_to_dto(user_model))
 
         @self._router.delete("/me/photo", response_model=CoreResponse[UserDTO])
         async def delete_profile_photo(
             service: UserService = Depends(get_user_service),
             user_id: UUID = Depends(get_current_user_id),
         ):
-            from src.modules.users.infrastructure.mapper import UserMapper
+            from src.modules.users.infrastructure.user_dto_helper import user_to_dto
             user_model = await service.update_profile(user_id, photo_url=None)
-            user_entity = UserMapper().to_entity(user_model)
-            return CoreResponse(success=True, status_code=200, message="Foto eliminada", content=UserDTO.model_validate(user_entity))
+            return CoreResponse(success=True, status_code=200, message="Foto eliminada", content=user_to_dto(user_model))
 
         @self._router.post("/forgot-password", response_model=CoreResponse)
         async def forgot_password(
             body: ForgotPasswordRequest,
+            response: Response,
         ):
             from src.modules.users.infrastructure.repository import UserRepository
             from src.config.database import get_session
             from src.utils.email import send_email
             from src.config.settings import settings
+            from src.config.models import UserRole as UserRoleModel
+            from sqlalchemy import select as sa_select
 
             async with get_session() as session:
                 repo = UserRepository(session)
                 user = await repo.get_by_email(body.email)
-                if user:
-                    import jwt
-                    from datetime import datetime, timedelta
-                    reset_token = jwt.encode(
-                        {"sub": str(user.id), "type": "password_reset", "exp": datetime.utcnow() + timedelta(hours=1)},
-                        settings.SECRET_KEY,
-                        algorithm="HS256",
-                    )
-                    link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token}"
-                    await send_email(
-                        body.email,
-                        "Recuperación de contraseña - AutoTech",
-                        f'<p>Haz clic en el siguiente enlace para restablecer tu contraseña:</p><p><a href="{link}">{link}</a></p><p>Este enlace expira en 1 hora.</p>',
-                    )
-            return CoreResponse(success=True, status_code=200, message="Si el correo está registrado, recibirás un enlace de recuperación.", content=None)
+                if not user:
+                    response.status_code = 404
+                    return CoreResponse(success=False, status_code=404, message="No existe una cuenta registrada con este correo.", content=None)
+
+                # Check roles — only CLIENT and WORKSHOP_OWNER can reset password
+                from src.config.models import Role as RoleModel
+                roles_stmt = sa_select(RoleModel.name).join(
+                    UserRoleModel, UserRoleModel.role_id == RoleModel.id
+                ).where(UserRoleModel.user_id == user.id)
+                r = await session.execute(roles_stmt)
+                roles = [row[0] for row in r.all()]
+
+                if "ADMIN" in roles or "SUPERADMIN" in roles:
+                    response.status_code = 403
+                    return CoreResponse(success=False, status_code=403, message="Por seguridad, los administradores no pueden recuperar la contraseña por esta vía.", content=None)
+
+                import jwt
+                from datetime import datetime, timedelta
+                reset_token = jwt.encode(
+                    {"sub": str(user.id), "type": "password_reset", "exp": datetime.utcnow() + timedelta(hours=1)},
+                    settings.SECRET_KEY,
+                    algorithm="HS256",
+                )
+                link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token}"
+                from src.utils.email_templates import password_recovery
+                await send_email(
+                    body.email,
+                    "Recuperación de contraseña - AutoTech",
+                    password_recovery(body.email, link, lang=user.language_preference or "es"),
+                )
+            return CoreResponse(success=True, status_code=200, message="Se ha enviado un enlace de recuperación a tu correo.", content=None)
 
         @self._router.post("/reset-password", response_model=CoreResponse)
         async def reset_password(

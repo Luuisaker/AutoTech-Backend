@@ -152,6 +152,7 @@ class ServiceOrderRepository(GenericSQLRepository[ServiceOrderModel]):
                 selectinload(ServiceOrderModel.vehicle),
                 selectinload(ServiceOrderModel.user),
                 selectinload(ServiceOrderModel.payments),
+                selectinload(ServiceOrderModel.installments),
             )
             .where(condition)
         )
@@ -167,6 +168,7 @@ class ServiceOrderRepository(GenericSQLRepository[ServiceOrderModel]):
                 selectinload(ServiceOrderModel.vehicle),
                 selectinload(ServiceOrderModel.user),
                 selectinload(ServiceOrderModel.payments),
+                selectinload(ServiceOrderModel.installments),
             )
             .where(condition)
             .order_by(ServiceOrderModel.created_at.desc())
@@ -185,6 +187,7 @@ class ServiceOrderRepository(GenericSQLRepository[ServiceOrderModel]):
                 selectinload(ServiceOrderModel.vehicle),
                 selectinload(ServiceOrderModel.user),
                 selectinload(ServiceOrderModel.payments),
+                selectinload(ServiceOrderModel.installments),
             )
             .where(condition)
             .order_by(ServiceOrderModel.created_at.desc())

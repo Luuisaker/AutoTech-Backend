@@ -45,9 +45,15 @@ class OrderRouter(BaseRouter):
             service: OrderService = Depends(get_order_service),
             user_id: UUID = Depends(get_current_user_id),
         ):
-            result = await service.checkout(body, user_id)
-            handle_service_result(result, response)
-            return result
+            import logging
+            logger = logging.getLogger(__name__)
+            try:
+                result = await service.checkout(body, user_id)
+                handle_service_result(result, response)
+                return result
+            except Exception as e:
+                logger.exception(f"Checkout error for user {user_id}: {e}")
+                raise
 
         @self._router.get("/mine", response_model=CoreResponse[OrderListDTO])
         async def my_orders(
@@ -157,6 +163,20 @@ class OrderRouter(BaseRouter):
             user_id: UUID = Depends(get_current_user_id),
         ):
             result = await service.mark_installment_paid(installment_id, user_id, body)
+            handle_service_result(result, response)
+            return result
+
+        @self._router.post(
+            "/installments/{installment_id}/mark-erroneous",
+            response_model=CoreResponse[InstallmentDTO],
+        )
+        async def mark_installment_erroneous(
+            installment_id: UUID,
+            response: Response,
+            service: OrderService = Depends(get_order_service),
+            user_id: UUID = Depends(get_current_user_id),
+        ):
+            result = await service.mark_installment_erroneous(installment_id, user_id)
             handle_service_result(result, response)
             return result
 

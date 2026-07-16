@@ -7,7 +7,7 @@ from src.core.domain.entity import Entity
 @dataclass
 class Order(Entity):
     user_id: UUID
-    vehicle_id: UUID
+    vehicle_id: UUID | None = None
     mileage: int = 0
     total_amount: float = 0.0
     status: str = "PENDING"

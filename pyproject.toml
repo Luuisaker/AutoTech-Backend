@@ -3,7 +3,7 @@ name = "autotech-backend"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "Jorge Landaeta",email = "dev.jorge2003@gmail.com"}
+    {name = "Luis Ayala",email = "luisjqayala98@gmail.com"}
 ]
 requires-python = ">=3.12"
 dependencies = [
@@ -19,8 +19,13 @@ dependencies = [
     "bcrypt (>=5.0.0,<6.0.0)",
     "pyjwt (>=2.13.0,<3.0.0)",
     "python-multipart (>=0.0.32,<0.0.33)",
+    "resend (>=2.32.2,<3.0.0)",
+    "pyotp (>=2.9.0,<3.0.0)",
 ]
 
+
+[tool.poetry]
+package-mode = false
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -29,5 +34,15 @@ build-backend = "poetry.core.masonry.api"
 [dependency-groups]
 dev = [
     "ruff (>=0.15.17,<0.16.0)",
-    "pre-commit (>=4.6.0,<5.0.0)"
+    "pre-commit (>=4.6.0,<5.0.0)",
+    "pytest (>=8.0.0,<9.0.0)",
+    "pytest-asyncio (>=0.24.0,<1.0.0)",
+    "httpx (>=0.28.1,<0.29.0)",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: tests that require a real PostgreSQL database",
 ]

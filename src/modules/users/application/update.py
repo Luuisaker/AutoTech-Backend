@@ -6,6 +6,7 @@ class UpdateUserRequest(BaseModel):
     first_name: str | None = Field(default=None, min_length=2, max_length=64)
     last_name: str | None = Field(default=None, min_length=2, max_length=64)
     phone: str | None = Field(default=None, min_length=6, max_length=15)
+    language_preference: str | None = None
 
     @field_validator("phone")
     @classmethod

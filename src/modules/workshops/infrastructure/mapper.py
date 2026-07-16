@@ -116,6 +116,7 @@ class WorkshopPaymentMethodMapper(
             account_holder=model.account_holder,
             phone_number=model.phone_number,
             holder_ci=model.holder_ci,
+            email=model.email,
             is_active=model.is_active,
         )
 
@@ -129,5 +130,6 @@ class WorkshopPaymentMethodMapper(
             account_holder=entity.account_holder,
             phone_number=entity.phone_number,
             holder_ci=entity.holder_ci,
+            email=entity.email,
             is_active=entity.is_active,
         )

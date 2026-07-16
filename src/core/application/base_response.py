@@ -9,3 +9,4 @@ class Response(BaseModel, Generic[T]):
     status_code: int
     content: Optional[T] = None
     message: Optional[str] = None
+    min_down_payment_percentage: Optional[float] = None

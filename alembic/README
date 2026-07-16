@@ -1,1 +1,7 @@
-Generic single-database configuration with an async dbapi.
+AutoTech — Alembic Migrations
+
+Single migration (001_initial) creates all tables.
+To create a fresh DB: alembic upgrade head
+To tear down:        alembic downgrade base
+
+New migrations: alembic revision --autogenerate -m "description"

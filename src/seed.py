@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 
 import bcrypt
 
@@ -6,6 +7,7 @@ from src.config.database import session_factory
 from src.config.models import (
     User as UserModel,
     UserRole,
+    Role as RoleModel,
     Vehicle as VehicleModel,
     Workshop as WorkshopModel,
     WorkshopBankAccount as WorkshopBankAccountModel,
@@ -19,10 +21,21 @@ from src.config.models import (
 PASSWORD = "string"
 HASHED = bcrypt.hashpw(PASSWORD.encode(), bcrypt.gensalt()).decode()
 
+from src.modules.users.infrastructure.auth import ROLE_NAME_TO_UUID
+from src.modules.users.domain.role import RoleName
+
 
 async def seed() -> None:
     session = session_factory()
     async with session:
+        # ── ROLES ───────────────────────────────────────────────
+        for name, role_id in ROLE_NAME_TO_UUID.items():
+            existing = await session.get(RoleModel, uuid.UUID(role_id))
+            if not existing:
+                session.add(RoleModel(id=uuid.UUID(role_id), name=name))
+        await session.flush()
+        print("[OK] Roles verificados/creados")
+
         # ── USERS ──────────────────────────────────────────────
 
         user1 = UserModel(
@@ -32,7 +45,7 @@ async def seed() -> None:
             last_name="Martínez",
             ci="V-12345678",
             phone="04121234567",
-            roles=[UserRole(role="CLIENT"), UserRole(role="WORKSHOP_OWNER")],
+            roles=[UserRole(role_id=ROLE_NAME_TO_UUID[RoleName.CLIENT]), UserRole(role_id=ROLE_NAME_TO_UUID[RoleName.WORKSHOP_OWNER])],
         )
         session.add(user1)
 
@@ -43,7 +56,7 @@ async def seed() -> None:
             last_name="Rodríguez",
             ci="V-23456789",
             phone="04141234567",
-            roles=[UserRole(role="CLIENT")],
+            roles=[UserRole(role_id=ROLE_NAME_TO_UUID[RoleName.CLIENT])],
         )
         session.add(user2)
 
@@ -54,16 +67,29 @@ async def seed() -> None:
             last_name="Sistema",
             ci="V-11111111",
             phone="04241234567",
-            roles=[UserRole(role="ADMIN")],
+            roles=[UserRole(role_id=ROLE_NAME_TO_UUID[RoleName.ADMIN])],
         )
         session.add(user3)
 
+        superadmin_hash = bcrypt.hashpw("SUPER123*".encode(), bcrypt.gensalt()).decode()
+        user4 = UserModel(
+            email="superadmin@gmail.com",
+            password_hash=superadmin_hash,
+            first_name="superman",
+            last_name="SuperAdmin",
+            ci="V-99999999",
+            phone="04249999999",
+            roles=[UserRole(role_id=ROLE_NAME_TO_UUID[RoleName.SUPERADMIN])],
+        )
+        session.add(user4)
+
         await session.flush()
 
-        print("✓ Usuarios creados:")
-        print(f"  user@example.com  (Carlos, WORKSHOP_OWNER + CLIENT) — id={user1.id}")
-        print(f"  maria@example.com  (María, CLIENT)                 — id={user2.id}")
-        print(f"  admin@example.com (Admin, ADMIN)                   — id={user3.id}")
+        print("[OK] Usuarios creados:")
+        print(f"  user@example.com  (Carlos, WORKSHOP_OWNER + CLIENT) -- id={user1.id}")
+        print(f"  maria@example.com  (Maria, CLIENT)                 -- id={user2.id}")
+        print(f"  admin@example.com (Admin, ADMIN)                   -- id={user3.id}")
+        print(f"  gabrielsylar554@gmail.com (Gabriel, SUPERADMIN)     -- id={user4.id}")
 
         # ── VEHICLES ────────────────────────────────────────────
 
@@ -108,7 +134,7 @@ async def seed() -> None:
         for v in vehicles_data:
             session.add(v)
         await session.flush()
-        print(f"✓ {len(vehicles_data)} vehículos creados")
+        print(f"[OK] {len(vehicles_data)} vehículos creados")
 
         # ── WORKSHOPS ───────────────────────────────────────────
 
@@ -137,12 +163,12 @@ async def seed() -> None:
         session.add(workshop_unverified)
 
         await session.flush()
-        print("✓ Talleres creados:")
+        print("[OK] Talleres creados:")
         print(
-            f"  {workshop_verified.name}   (certificado)   — id={workshop_verified.id}"
+            f"  {workshop_verified.name}   (certificado)   -- id={workshop_verified.id}"
         )
         print(
-            f"  {workshop_unverified.name} (no certificado) — id={workshop_unverified.id}"
+            f"  {workshop_unverified.name} (no certificado) -- id={workshop_unverified.id}"
         )
 
         # ── BANK ACCOUNTS (verified workshop) ───────────────────
@@ -183,7 +209,7 @@ async def seed() -> None:
         for m in mobile_payments:
             session.add(m)
         print(
-            f"✓ {len(bank_accounts)} cuentas bancarias + {len(mobile_payments)} pagos móviles creados"
+            f"[OK] {len(bank_accounts)} cuentas bancarias + {len(mobile_payments)} pagos móviles creados"
         )
 
         # ── SERVICES (verified workshop) ────────────────────────
@@ -222,7 +248,7 @@ async def seed() -> None:
         ]
         for s in services_data:
             session.add(s)
-        print(f"✓ {len(services_data)} servicios creados")
+        print(f"[OK] {len(services_data)} servicios creados")
 
         # ── PARTS (verified workshop) ───────────────────────────
 
@@ -339,7 +365,7 @@ async def seed() -> None:
 
         await session.flush()
         print(
-            f"✓ {len(parts_verified)} repuestos (taller certificado) + {len(parts_unverified)} repuestos (taller no certificado) creados"
+            f"[OK] {len(parts_verified)} repuestos (taller certificado) + {len(parts_unverified)} repuestos (taller no certificado) creados"
         )
 
         # ── USER PAYMENT ACCOUNTS ────────────────────────────────
@@ -372,19 +398,20 @@ async def seed() -> None:
         for a in user_payment_accounts:
             session.add(a)
         await session.flush()
-        print(f"✓ {len(user_payment_accounts)} métodos de pago de usuario creados")
+        print(f"[OK] {len(user_payment_accounts)} métodos de pago de usuario creados")
 
         # ── DONE ────────────────────────────────────────────────
         await session.commit()
 
     print()
-    print("══════════════════════════════════════════════════")
+    print("=" * 50)
     print("  Seed completado exitosamente")
-    print("══════════════════════════════════════════════════")
-    print(f"  user@example.com / {PASSWORD}  → dueño de talleres, vehículos, repuestos")
-    print(f"  maria@example.com / {PASSWORD} → compradora, solo vehículos")
-    print(f"  admin@example.com / {PASSWORD}  → administrador del sistema")
-    print("══════════════════════════════════════════════════")
+    print("=" * 50)
+    print(f"  user@example.com / {PASSWORD}  -> dueno de talleres, vehiculos, repuestos")
+    print(f"  maria@example.com / {PASSWORD} -> compradora, solo vehiculos")
+    print(f"  admin@example.com / {PASSWORD}  -> administrador del sistema")
+    print(f"  gabrielsylar554@gmail.com / SUPER123* -> superadmin")
+    print("=" * 50)
 
 
 if __name__ == "__main__":

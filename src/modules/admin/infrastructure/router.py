@@ -17,11 +17,29 @@ from src.config.models import (
     OrderItem as OrderItemModel,
     Installment as InstallmentModel,
     ServiceOrder as ServiceOrderModel,
+    ServiceOrderInstallment as ServiceOrderInstallmentModel,
+    ServiceOrderPayment as ServiceOrderPaymentModel,
+    WorkshopCommission as WorkshopCommissionModel,
+    Review as ReviewModel,
+    OrderReview as OrderReviewModel,
+    Transaction as TransactionModel,
+    CreditHistory as CreditHistoryModel,
+    LateFee as LateFeeModel,
+    VehicleHistoryLog as VehicleHistoryLogModel,
+    AssistanceRequest as AssistanceRequestModel,
+    Cart as CartModel,
+    CartItem as CartItemModel,
+    TrustedDevice as TrustedDeviceModel,
+    UserPaymentAccount as UserPaymentAccountModel,
+    CreditLimitReview as CreditLimitReviewModel,
+    PartPurchase as PartPurchaseModel,
+    PartPayment as PartPaymentModel,
 )
-from src.modules.users.infrastructure.auth import CurrentUser
-from src.modules.users.infrastructure.permissions import require_admin
+from src.modules.users.infrastructure.auth import CurrentUser, ROLE_NAME_TO_UUID, ROLE_UUID_TO_NAME
+from src.modules.users.infrastructure.permissions import require_admin, require_superadmin
 from src.modules.users.infrastructure.repository import UserRepository
 from src.modules.users.infrastructure.mapper import UserMapper
+from src.modules.users.infrastructure.user_dto_helper import user_to_dto
 from src.modules.users.application.create import UserDTO
 from src.modules.vehicles.application.create import VehicleDTO, VehicleListDTO
 from src.modules.workshops.application.create import WorkshopDTO
@@ -76,6 +94,9 @@ class AdminStatsDTO(BaseModel):
     total_sales: int
     total_revenue: float
     total_financed: float
+    total_credit_limit: float
+    total_credit_available: float
+    total_financing: float
 
 
 class AdminWorkshopEarningsDTO(BaseModel):
@@ -130,6 +151,7 @@ class AdminUpdateUserRequest(BaseModel):
     phone: str | None = None
     roles: list[str] | None = None
     is_suspended: int | None = None
+    language_preference: str | None = None
 
 
 class AdminUpdateWorkshopRequest(BaseModel):
@@ -235,9 +257,17 @@ class AdminRouter(BaseRouter):
         async def get_stats(
             _: CurrentUser = Depends(require_admin),
         ):
+            from src.config.models import ServiceOrderInstallment as AdminSOI, ServiceOrder as AdminSO
             async with get_session() as session:
+                not_admin_subq = select(UserRoleModel.user_id).where(
+                    UserRoleModel.role_id == ROLE_NAME_TO_UUID["ADMIN"]
+                )
                 user_count = (
-                    await session.execute(select(func.count(UserModel.id)))
+                    await session.execute(
+                        select(func.count(UserModel.id))
+                        .where(UserModel.deleted_at.is_(None))
+                        .where(UserModel.id.notin_(not_admin_subq))
+                    )
                 ).scalar() or 0
                 workshop_count = (
                     await session.execute(select(func.count(WorkshopModel.id)))
@@ -264,26 +294,85 @@ class AdminRouter(BaseRouter):
                     )
                 ).scalar() or 0
 
-                # Monthly revenue (last 30 days)
+                # Monthly revenue: sum of PAID installments in last 30 days
                 thirty_days_ago = datetime.now(timezone.utc).replace(
                     hour=0, minute=0, second=0, microsecond=0
                 ) - timedelta(days=30)
-                revenue_result = await session.execute(
-                    select(func.sum(OrderModel.total_amount)).where(
-                        OrderModel.deleted_at.is_(None),
-                        OrderModel.created_at >= thirty_days_ago,
+                parts_revenue_result = await session.execute(
+                    select(func.coalesce(func.sum(InstallmentModel.amount), 0)).where(
+                        InstallmentModel.status == "PAID",
+                        InstallmentModel.deleted_at.is_(None),
+                        InstallmentModel.paid_at >= thirty_days_ago,
                     )
                 )
-                monthly_revenue = float(revenue_result.scalar() or 0.0)
+                monthly_parts_revenue = float(parts_revenue_result.scalar() or 0.0)
 
-                # Total financed (sum of unpaid installments)
+                service_revenue_result = await session.execute(
+                    select(func.coalesce(func.sum(AdminSOI.amount), 0)).where(
+                        AdminSOI.status == "PAID",
+                        AdminSOI.paid_at >= thirty_days_ago,
+                    )
+                )
+                monthly_service_revenue = float(service_revenue_result.scalar() or 0.0)
+
+                # Include PAID commissions and late fees in monthly revenue
+                commission_revenue_result = await session.execute(
+                    select(func.coalesce(func.sum(WorkshopCommissionModel.commission_amount), 0)).where(
+                        WorkshopCommissionModel.status == "PAID",
+                        WorkshopCommissionModel.paid_at >= thirty_days_ago,
+                    )
+                )
+                monthly_commission_revenue = float(commission_revenue_result.scalar() or 0.0)
+
+                from src.config.models import LateFee as AdminLF
+                late_fee_revenue_result = await session.execute(
+                    select(func.coalesce(func.sum(AdminLF.amount), 0)).where(
+                        AdminLF.status == "PAID",
+                        AdminLF.paid_at >= thirty_days_ago,
+                    )
+                )
+                monthly_late_fee_revenue = float(late_fee_revenue_result.scalar() or 0.0)
+
+                monthly_revenue = monthly_parts_revenue + monthly_service_revenue + monthly_commission_revenue + monthly_late_fee_revenue
+
+                # Total financed (all-time: sum of ALL installments ever created, paid or not)
                 financed_result = await session.execute(
                     select(func.coalesce(func.sum(InstallmentModel.amount), 0)).where(
-                        InstallmentModel.status != "PAID",
                         InstallmentModel.deleted_at.is_(None),
                     )
                 )
                 total_financed = float(financed_result.scalar() or 0.0)
+
+            # Credit line aggregates (non-admin, non-deleted users)
+            # Calculate total financing dynamically from unpaid installments
+            total_parts_financing_stmt = (
+                select(func.coalesce(func.sum(InstallmentModel.amount), 0.0))
+                .join(OrderModel, InstallmentModel.order_id == OrderModel.id)
+                .where(
+                    InstallmentModel.status.in_(["PENDING", "PENDING_VERIFICATION", "OVERDUE"]),
+                    InstallmentModel.deleted_at.is_(None),
+                    OrderModel.deleted_at.is_(None),
+                )
+            )
+            total_parts_financing = float((await session.execute(total_parts_financing_stmt)).scalar() or 0.0)
+
+            total_service_financing_stmt = (
+                select(func.coalesce(func.sum(AdminSOI.amount), 0.0))
+                .join(AdminSO, AdminSOI.service_order_id == AdminSO.id)
+                .where(
+                    AdminSOI.status.in_(["PENDING", "PENDING_VERIFICATION", "OVERDUE"]),
+                )
+            )
+            total_service_financing = float((await session.execute(total_service_financing_stmt)).scalar() or 0.0)
+
+            total_credit_limit_result = await session.execute(
+                select(func.coalesce(func.sum(UserModel.parts_credit_limit), 0))
+                .where(UserModel.deleted_at.is_(None))
+                .where(UserModel.id.notin_(not_admin_subq))
+            )
+            total_credit_limit = float(total_credit_limit_result.scalar() or 0.0)
+            total_financing = total_parts_financing + total_service_financing
+            total_credit_available = total_credit_limit - total_financing
 
             return CoreResponse(
                 success=True,
@@ -297,6 +386,9 @@ class AdminRouter(BaseRouter):
                     total_sales=total_sales,
                     total_revenue=monthly_revenue,
                     total_financed=total_financed,
+                    total_credit_limit=total_credit_limit,
+                    total_credit_available=total_credit_available,
+                    total_financing=total_financing,
                 ),
             )
 
@@ -306,27 +398,45 @@ class AdminRouter(BaseRouter):
             id: UUID,
             _: CurrentUser = Depends(require_admin),
         ):
+            import json
+            from fastapi import Response as FastResponse
             async with get_session() as session:
                 count = await _count_open_orders(session, "users", id)
-            return CoreResponse(success=True, status_code=200, content={"open_orders": count})
+            return FastResponse(
+                content=json.dumps({"success": True, "status_code": 200, "content": {"open_orders": count}}),
+                media_type="application/json",
+                status_code=200,
+            )
 
         @self._router.get("/workshops/{id}/open-orders")
         async def workshop_open_orders(
             id: UUID,
             _: CurrentUser = Depends(require_admin),
         ):
+            import json
+            from fastapi import Response as FastResponse
             async with get_session() as session:
                 count = await _count_open_orders(session, "workshops", id)
-            return CoreResponse(success=True, status_code=200, content={"open_orders": count})
+            return FastResponse(
+                content=json.dumps({"success": True, "status_code": 200, "content": {"open_orders": count}}),
+                media_type="application/json",
+                status_code=200,
+            )
 
         @self._router.get("/vehicles/{id}/open-orders")
         async def vehicle_open_orders(
             id: UUID,
             _: CurrentUser = Depends(require_admin),
         ):
+            import json
+            from fastapi import Response as FastResponse
             async with get_session() as session:
                 count = await _count_open_orders(session, "vehicles", id)
-            return CoreResponse(success=True, status_code=200, content={"open_orders": count})
+            return FastResponse(
+                content=json.dumps({"success": True, "status_code": 200, "content": {"open_orders": count}}),
+                media_type="application/json",
+                status_code=200,
+            )
 
         # --- Earnings ---
 
@@ -350,7 +460,48 @@ class AdminRouter(BaseRouter):
             start_date = _earnings_start_date(period)
 
             async with get_session() as session:
-                # ── Orders (parts) ──
+                # ── Subquery: installment stats per order ──
+                inst_subq = (
+                    select(
+                        InstallmentModel.order_id.label("oid"),
+                        func.coalesce(
+                            func.sum(
+                                case(
+                                    (InstallmentModel.status == "PAID", InstallmentModel.amount),
+                                    else_=0,
+                                )
+                            ),
+                            0,
+                        ).label("paid"),
+                        func.coalesce(
+                            func.sum(
+                                case(
+                                    (InstallmentModel.status.in_(["PENDING", "PENDING_VERIFICATION", "OVERDUE"]), InstallmentModel.amount),
+                                    else_=0,
+                                )
+                            ),
+                            0,
+                        ).label("pending"),
+                    )
+                    .where(InstallmentModel.deleted_at.is_(None))
+                    .group_by(InstallmentModel.order_id)
+                    .subquery()
+                )
+
+                # ── Subquery: order revenue per (order, workshop) ──
+                # Each order may have items from multiple workshops; allocate total_amount
+                # proportionally by workshop item subtotal
+                item_subq = (
+                    select(
+                        OrderItemModel.order_id.label("oid"),
+                        OrderItemModel.workshop_id.label("wid"),
+                        func.sum(OrderItemModel.unit_price * OrderItemModel.quantity).label("ws_subtotal"),
+                    )
+                    .group_by(OrderItemModel.order_id, OrderItemModel.workshop_id)
+                    .subquery()
+                )
+
+                # ── Orders (parts) — proportional allocation per workshop ──
                 order_stmt = (
                     select(
                         WorkshopModel.owner_id,
@@ -359,31 +510,25 @@ class AdminRouter(BaseRouter):
                         WorkshopModel.id,
                         WorkshopModel.name,
                         func.count(OrderModel.id.distinct()).label("order_count"),
-                        func.coalesce(func.sum(OrderModel.total_amount), 0).label("order_revenue"),
+                        func.coalesce(func.sum(item_subq.c.ws_subtotal), 0).label("order_revenue"),
                         func.coalesce(
                             func.sum(
-case(
-    (InstallmentModel.status == "PAID", InstallmentModel.amount),
-    else_=0,
-)
+                                inst_subq.c.paid * item_subq.c.ws_subtotal / func.nullif(OrderModel.total_amount, 0)
                             ),
                             0,
                         ).label("order_paid"),
                         func.coalesce(
                             func.sum(
-                                case(
-                                    (InstallmentModel.status == "PENDING", InstallmentModel.amount),
-                                    else_=0,
-                                )
+                                inst_subq.c.pending * item_subq.c.ws_subtotal / func.nullif(OrderModel.total_amount, 0)
                             ),
                             0,
                         ).label("order_pending"),
                     )
                     .select_from(OrderModel)
-                    .join(OrderItemModel, OrderItemModel.order_id == OrderModel.id)
-                    .join(WorkshopModel, WorkshopModel.id == OrderItemModel.workshop_id)
+                    .join(item_subq, item_subq.c.oid == OrderModel.id)
+                    .join(WorkshopModel, WorkshopModel.id == item_subq.c.wid)
                     .join(UserModel, UserModel.id == WorkshopModel.owner_id)
-                    .outerjoin(InstallmentModel, InstallmentModel.order_id == OrderModel.id)
+                    .outerjoin(inst_subq, inst_subq.c.oid == OrderModel.id)
                     .where(
                         OrderModel.deleted_at.is_(None),
                         OrderModel.created_at >= start_date,
@@ -399,6 +544,33 @@ case(
                 order_rows = (await session.execute(order_stmt)).all()
 
                 # ── Service Orders ──
+                # Subquery: service installment stats per service order
+                svc_inst_subq = (
+                    select(
+                        ServiceOrderInstallmentModel.service_order_id.label("soid"),
+                        func.coalesce(
+                            func.sum(
+                                case(
+                                    (ServiceOrderInstallmentModel.status == "PAID", ServiceOrderInstallmentModel.amount),
+                                    else_=0,
+                                )
+                            ),
+                            0,
+                        ).label("paid"),
+                        func.coalesce(
+                            func.sum(
+                                case(
+                                    (ServiceOrderInstallmentModel.status.in_(["PENDING", "PENDING_VERIFICATION", "OVERDUE"]), ServiceOrderInstallmentModel.amount),
+                                    else_=0,
+                                )
+                            ),
+                            0,
+                        ).label("pending"),
+                    )
+                    .group_by(ServiceOrderInstallmentModel.service_order_id)
+                    .subquery()
+                )
+
                 svc_stmt = (
                     select(
                         WorkshopModel.owner_id,
@@ -415,25 +587,13 @@ case(
                         ).label("svc_revenue"),
                         func.coalesce(
                             func.sum(
-                                case(
-                                    (
-                                        ServiceOrderModel.status.in_(["COMPLETED", "DELIVERED"]),
-                                        func.coalesce(ServiceOrderModel.final_price, ServiceOrderModel.base_price),
-                                    ),
-                                    else_=0,
-                                )
+                                func.coalesce(svc_inst_subq.c.paid, 0)
                             ),
                             0,
                         ).label("svc_paid"),
                         func.coalesce(
                             func.sum(
-                                case(
-                                    (
-                                        ~ServiceOrderModel.status.in_(["COMPLETED", "DELIVERED", "CANCELLED"]),
-                                        func.coalesce(ServiceOrderModel.final_price, ServiceOrderModel.base_price),
-                                    ),
-                                    else_=0,
-                                )
+                                func.coalesce(svc_inst_subq.c.pending, 0)
                             ),
                             0,
                         ).label("svc_pending"),
@@ -441,6 +601,7 @@ case(
                     .select_from(ServiceOrderModel)
                     .join(WorkshopModel, WorkshopModel.id == ServiceOrderModel.workshop_id)
                     .join(UserModel, UserModel.id == WorkshopModel.owner_id)
+                    .outerjoin(svc_inst_subq, svc_inst_subq.c.soid == ServiceOrderModel.id)
                     .where(ServiceOrderModel.created_at >= start_date)
                     .group_by(
                         WorkshopModel.owner_id,
@@ -548,8 +709,9 @@ case(
             offset: int = Query(default=0, ge=0),
             limit: int = Query(default=100, ge=1, le=200),
             search: str | None = Query(default=None),
-            _: CurrentUser = Depends(require_admin),
+            current_user: CurrentUser = Depends(require_admin),
         ):
+            is_superadmin = ROLE_NAME_TO_UUID["SUPERADMIN"] in current_user.roles
             async with get_session() as session:
                 stmt = (
                     select(UserModel)
@@ -566,19 +728,22 @@ case(
                 stmt = stmt.offset(offset).limit(limit).order_by(UserModel.created_at.desc())
                 r = await session.execute(stmt)
                 all_users = r.unique().scalars().all()
-                # Filter out ADMIN users
-                users = [
-                    u
-                    for u in all_users
-                    if not any(role.role == "ADMIN" for role in u.roles)
-                ]
+                # SUPERADMIN sees all users; ADMIN cannot see other ADMINs
+                if is_superadmin:
+                    users = all_users
+                else:
+                    users = [
+                        u
+                        for u in all_users
+                        if not any(str(role.role_id) == ROLE_NAME_TO_UUID["ADMIN"] for role in u.roles)
+                    ]
 
             _mapper = UserMapper()
             return CoreResponse(
                 success=True,
                 status_code=200,
                 content=AdminUserListDTO(
-                    users=[UserDTO.model_validate(_mapper.to_entity(u)) for u in users]
+                    users=[user_to_dto(u) for u in users]
                 ),
             )
 
@@ -595,7 +760,7 @@ case(
             return CoreResponse(
                 success=True,
                 status_code=200,
-                content=UserDTO.model_validate(UserMapper().to_entity(user)),
+                content=user_to_dto(user),
             )
 
         @self._router.put("/users/{id}", response_model=CoreResponse[UserDTO])
@@ -667,14 +832,15 @@ case(
                 success=True,
                 status_code=200,
                 message="Usuario actualizado exitosamente",
-                content=UserDTO.model_validate(UserMapper().to_entity(user)),
+                content=user_to_dto(user),
             )
 
         @self._router.delete("/users/{id}", response_model=CoreResponse)
         async def delete_user(
             id: UUID,
             response: Response,
-            _: CurrentUser = Depends(require_admin),
+            force: bool = Query(default=False),
+            _: CurrentUser = Depends(require_superadmin),
         ):
             async with get_session() as session:
                 repo = UserRepository(session)
@@ -682,12 +848,60 @@ case(
                 if not user:
                     raise HTTPException(status_code=404, detail="Usuario no encontrado")
                 open_orders = await _count_open_orders(session, "users", id)
-                if open_orders > 0:
+                if open_orders > 0 and not force:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"No se puede eliminar el usuario porque tiene {open_orders} ordenes activas.",
+                        detail=f"El usuario tiene {open_orders} ordenes activas. Usa force=true para eliminar de todas formas.",
                     )
-                user.deleted_at = datetime.now(timezone.utc)
+                now = datetime.now(timezone.utc)
+
+                # Cascade soft-delete: orders (as buyer)
+                orders_stmt = select(OrderModel).where(OrderModel.user_id == id, OrderModel.deleted_at.is_(None))
+                for o in (await session.execute(orders_stmt)).scalars().all():
+                    o.deleted_at = now
+                    for inst in list(o.installments):
+                        inst.deleted_at = now
+                    for item in list(o.items):
+                        item.deleted_at = now
+
+                # Cascade soft-delete: service orders
+                so_stmt = select(ServiceOrderModel).where(ServiceOrderModel.user_id == id)
+                for so in (await session.execute(so_stmt)).scalars().all():
+                    so.status = "CANCELLED"
+
+                # Soft-delete: vehicles
+                veh_stmt = select(VehicleModel).where(VehicleModel.owner_id == id, VehicleModel.deleted_at.is_(None))
+                for v in (await session.execute(veh_stmt)).scalars().all():
+                    v.deleted_at = now
+
+                # Soft-delete: workshops owned by user
+                ws_stmt = select(WorkshopModel).where(WorkshopModel.owner_id == id, WorkshopModel.deleted_at.is_(None))
+                for ws in (await session.execute(ws_stmt)).scalars().all():
+                    ws.deleted_at = now
+                    for p in (await session.execute(select(PartModel).where(PartModel.workshop_id == ws.id))).scalars().all():
+                        p.deleted_at = now
+                    for s in (await session.execute(select(WorkshopServiceModel).where(WorkshopServiceModel.workshop_id == ws.id))).scalars().all():
+                        s.deleted_at = now
+
+                # Delete: roles, cart, trusted devices, payment accounts, credit history, reviews
+                for r in (await session.execute(select(UserRoleModel).where(UserRoleModel.user_id == id))).scalars().all():
+                    await session.delete(r)
+                for c in (await session.execute(select(CartModel).where(CartModel.user_id == id))).scalars().all():
+                    await session.delete(c)
+                for td in (await session.execute(select(TrustedDeviceModel).where(TrustedDeviceModel.user_id == id))).scalars().all():
+                    await session.delete(td)
+                for upa in (await session.execute(select(UserPaymentAccountModel).where(UserPaymentAccountModel.user_id == id))).scalars().all():
+                    await session.delete(upa)
+                for ch in (await session.execute(select(CreditHistoryModel).where(CreditHistoryModel.user_id == id))).scalars().all():
+                    await session.delete(ch)
+                for rv in (await session.execute(select(ReviewModel).where(ReviewModel.user_id == id))).scalars().all():
+                    await session.delete(rv)
+                for clr in (await session.execute(select(CreditLimitReviewModel).where(CreditLimitReviewModel.user_id == id))).scalars().all():
+                    await session.delete(clr)
+                for lf in (await session.execute(select(LateFeeModel).where(LateFeeModel.user_id == id))).scalars().all():
+                    await session.delete(lf)
+
+                user.deleted_at = now
                 await session.commit()
             return CoreResponse(
                 success=True, status_code=200, message="Usuario eliminado exitosamente"
@@ -782,25 +996,25 @@ case(
         @self._router.delete("/workshops/{id}", response_model=CoreResponse)
         async def delete_workshop(
             id: UUID,
-            _: CurrentUser = Depends(require_admin),
+            force: bool = Query(default=False),
+            _: CurrentUser = Depends(require_superadmin),
         ):
             async with get_session() as session:
                 workshop = await session.get(WorkshopModel, id)
                 if not workshop:
                     raise HTTPException(status_code=404, detail="Taller no encontrado")
 
-                # Check for open orders
                 open_orders = await _count_open_orders(session, "workshops", id)
-                if open_orders > 0:
+                if open_orders > 0 and not force:
                     raise HTTPException(
                         status_code=400,
-                        detail="No se puede eliminar el taller porque tiene órdenes activas.",
+                        detail=f"El taller tiene {open_orders} órdenes activas. Usa force=true para eliminar de todas formas.",
                     )
 
                 now = datetime.now(timezone.utc)
                 workshop.deleted_at = now
 
-                # Soft delete parts belonging to this workshop
+                # Soft delete parts
                 parts_stmt = select(PartModel).where(PartModel.workshop_id == id)
                 parts_r = await session.execute(parts_stmt)
                 for p in parts_r.scalars().all():
@@ -813,6 +1027,29 @@ case(
                 svc_r = await session.execute(svc_stmt)
                 for s in svc_r.scalars().all():
                     s.deleted_at = now
+
+                # Cascade: cancel service orders
+                so_stmt = select(ServiceOrderModel).where(ServiceOrderModel.workshop_id == id)
+                for so in (await session.execute(so_stmt)).scalars().all():
+                    so.status = "CANCELLED"
+
+                # Cascade: soft-delete orders containing items from this workshop
+                oi_stmt = select(OrderItemModel.order_id).where(OrderItemModel.workshop_id == id, OrderItemModel.deleted_at.is_(None))
+                order_ids = [row[0] for row in (await session.execute(oi_stmt)).all()]
+                if order_ids:
+                    for o in (await session.execute(select(OrderModel).where(OrderModel.id.in_(order_ids)))).scalars().all():
+                        o.deleted_at = now
+                        for inst in list(o.installments):
+                            inst.deleted_at = now
+                        for item in list(o.items):
+                            if item.workshop_id == id:
+                                item.deleted_at = now
+
+                # Delete: reviews, commissions, bank accounts, mobile payments, payment methods
+                for rv in (await session.execute(select(ReviewModel).where(ReviewModel.workshop_id == id))).scalars().all():
+                    await session.delete(rv)
+                for wc in (await session.execute(select(WorkshopCommissionModel).where(WorkshopCommissionModel.workshop_id == id))).scalars().all():
+                    await session.delete(wc)
 
                 await session.commit()
 
@@ -925,7 +1162,26 @@ case(
 
         # --- Vehicles ---
 
-        @self._router.get("/vehicles", response_model=CoreResponse[VehicleListDTO])
+        class AdminVehicleDTO(BaseModel):
+            id: str
+            owner_id: str
+            owner_name: str | None = None
+            owner_ci: str | None = None
+            owner_email: str | None = None
+            vehicle_type: str
+            brand: str
+            model: str
+            year: int
+            license_plate: str
+            vin: str
+            photo_url: str | None = None
+            is_active: int
+            created_at: str
+
+        class AdminVehicleListDTO(BaseModel):
+            vehicles: list[AdminVehicleDTO]
+
+        @self._router.get("/vehicles", response_model=CoreResponse[AdminVehicleListDTO])
         async def list_vehicles(
             offset: int = Query(default=0, ge=0),
             limit: int = Query(default=100, ge=1, le=200),
@@ -934,7 +1190,8 @@ case(
         ):
             async with get_session() as session:
                 stmt = (
-                    select(VehicleModel)
+                    select(VehicleModel, UserModel)
+                    .join(UserModel, VehicleModel.owner_id == UserModel.id)
                     .where(VehicleModel.deleted_at.is_(None))
                 )
                 if search:
@@ -943,17 +1200,38 @@ case(
                         VehicleModel.vehicle_type.ilike(pattern) |
                         VehicleModel.license_plate.ilike(pattern) |
                         VehicleModel.model.ilike(pattern) |
-                        VehicleModel.brand.ilike(pattern)
+                        VehicleModel.brand.ilike(pattern) |
+                        UserModel.first_name.ilike(pattern) |
+                        UserModel.last_name.ilike(pattern) |
+                        UserModel.ci.ilike(pattern)
                     )
                 stmt = stmt.offset(offset).limit(limit).order_by(VehicleModel.created_at.desc())
                 r = await session.execute(stmt)
-                vehicles = r.scalars().all()
+                rows = r.unique().all()
 
             return CoreResponse(
                 success=True,
                 status_code=200,
-                content=VehicleListDTO(
-                    vehicles=[VehicleDTO.model_validate(v) for v in vehicles]
+                content=AdminVehicleListDTO(
+                    vehicles=[
+                        AdminVehicleDTO(
+                            id=str(v.id),
+                            owner_id=str(v.owner_id),
+                            owner_name=f"{u.first_name} {u.last_name}".strip(),
+                            owner_ci=u.ci,
+                            owner_email=u.email,
+                            vehicle_type=v.vehicle_type,
+                            brand=v.brand,
+                            model=v.model,
+                            year=v.year,
+                            license_plate=v.license_plate,
+                            vin=v.vin,
+                            photo_url=v.photo_url,
+                            is_active=v.is_active,
+                            created_at=v.created_at.isoformat() if v.created_at else "",
+                        )
+                        for v, u in rows
+                    ]
                 ),
             )
 
@@ -964,13 +1242,17 @@ case(
             user_id: str
             buyer_name: str
             buyer_ci: str | None
-            vehicle_id: str
+            vehicle_id: str | None
             workshop_name: str
             mileage: int
             total_amount: float
             status: str
             payment_status: str
+            payment_type: str  # CONTADO or FINANCIADO
             installment_count: int
+            installments_paid: int
+            installments_pending_verification: int
+            installments_pending: int
             created_at: str
 
         class AdminOrderListDTO(BaseModel):
@@ -1008,8 +1290,10 @@ case(
                         UserModel.ci.ilike(pattern) |
                         OrderModel.id.cast(str).ilike(pattern)
                     )
-                if status:
-                    stmt = stmt.where(OrderModel.status == status)
+                if status == "PENDING":
+                    stmt = stmt.where(OrderModel.status.notin_(["RECEIVED", "CANCELLED", "CLOSED"]))
+                elif status == "CLOSED":
+                    stmt = stmt.where(OrderModel.status.in_(["RECEIVED", "CANCELLED", "CLOSED"]))
                 stmt = stmt.order_by(OrderModel.created_at.desc()).offset(offset).limit(limit)
                 r = await session.execute(stmt)
                 rows = r.all()
@@ -1023,26 +1307,38 @@ case(
                         seen.add(key)
                         orders_data.append((o, fn, ln, ci, wn))
 
+                # Build order DTOs with installment stats
+                order_dtos = []
+                for o, fn, ln, ci, wn in orders_data:
+                    insts = o.installments or []
+                    inst_paid = sum(1 for i in insts if i.status == "PAID")
+                    inst_pending_verif = sum(1 for i in insts if i.status == "PENDING_VERIFICATION")
+                    inst_pending = sum(1 for i in insts if i.status in ("PENDING", "OVERDUE"))
+                    payment_type = "FINANCIADO" if len(insts) > 1 else "CONTADO"
+
+                    order_dtos.append(AdminOrderDTO(
+                        id=str(o.id),
+                        user_id=str(o.user_id),
+                        buyer_name=f"{fn} {ln}".strip(),
+                        buyer_ci=ci,
+                        vehicle_id=str(o.vehicle_id) if o.vehicle_id else None,
+                        workshop_name=wn,
+                        mileage=o.mileage,
+                        total_amount=o.total_amount,
+                        status="CLOSED" if o.status in ("RECEIVED", "CANCELLED", "CLOSED") else "PENDING",
+                        payment_status=o.status,
+                        payment_type=payment_type,
+                        installment_count=len(insts),
+                        installments_paid=inst_paid,
+                        installments_pending_verification=inst_pending_verif,
+                        installments_pending=inst_pending,
+                        created_at=o.created_at.isoformat() if o.created_at else "",
+                    ))
+
                 return CoreResponse(
                     success=True,
                     status_code=200,
-                    content=AdminOrderListDTO(orders=[
-                        AdminOrderDTO(
-                            id=str(o.id),
-                            user_id=str(o.user_id),
-                            buyer_name=f"{fn} {ln}".strip(),
-                            buyer_ci=ci,
-                            vehicle_id=str(o.vehicle_id),
-                            workshop_name=wn,
-                            mileage=o.mileage,
-                            total_amount=o.total_amount,
-                            status="CLOSED" if o.status in ("RECEIVED", "CANCELLED") else "PENDING",
-                            payment_status=o.status,
-                            installment_count=len(o.installments) if o.installments else 0,
-                            created_at=o.created_at.isoformat() if o.created_at else "",
-                        )
-                        for o, fn, ln, ci, wn in orders_data
-                    ]),
+                    content=AdminOrderListDTO(orders=order_dtos),
                 )
 
         # -- Admin Service Orders --
@@ -1055,6 +1351,9 @@ case(
             workshop_name: str
             vehicle_brand: str
             vehicle_model: str
+            owner_first_name: str | None = None
+            owner_last_name: str | None = None
+            owner_ci: str | None = None
             status: str
             base_price: float
             final_price: float | None
@@ -1099,7 +1398,7 @@ case(
 
                 if status:
                     status_groups = {
-                        "activo": ["PENDING", "AT_WORKSHOP", "QUOTED", "REJECTED", "ACCEPTED", "IN_PROGRESS", "COMPLETED", "SHIPPED", "DELIVERED"],
+                        "activo": ["PENDING", "DROPPED_OFF", "AT_WORKSHOP", "REVISION_SENT", "QUOTED", "REJECTED", "ACCEPTED", "IN_PROGRESS", "COMPLETED", "SHIPPED", "DELIVERED"],
                         "finalizado": ["CLOSED", "CANCELLED"],
                     }
                     if status in status_groups:
@@ -1206,7 +1505,7 @@ case(
         @self._router.delete("/orders/{id}", response_model=CoreResponse)
         async def delete_order(
             id: UUID,
-            _: CurrentUser = Depends(require_admin),
+            _: CurrentUser = Depends(require_superadmin),
         ):
             async with get_session() as session:
                 order = await session.get(OrderModel, id)
@@ -1218,12 +1517,46 @@ case(
                 for item in list(order.items):
                     item.deleted_at = now
                 order.deleted_at = now
+                # Delete related: transactions, reviews, commissions, vehicle history
+                for t in (await session.execute(select(TransactionModel).where(TransactionModel.order_id == id))).scalars().all():
+                    await session.delete(t)
+                for rv in (await session.execute(select(OrderReviewModel).where(OrderReviewModel.order_id == id))).scalars().all():
+                    await session.delete(rv)
+                for wc in (await session.execute(select(WorkshopCommissionModel).where(WorkshopCommissionModel.order_id == id))).scalars().all():
+                    await session.delete(wc)
+                for vhl in (await session.execute(select(VehicleHistoryLogModel).where(VehicleHistoryLogModel.order_id == id))).scalars().all():
+                    await session.delete(vhl)
                 await session.commit()
 
                 return CoreResponse(
                     success=True,
                     status_code=200,
                     message="Orden eliminada exitosamente",
+                )
+
+        @self._router.delete("/service-orders/{id}", response_model=CoreResponse)
+        async def delete_service_order(
+            id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            async with get_session() as session:
+                so = await session.get(ServiceOrderModel, id)
+                if not so:
+                    raise HTTPException(status_code=404, detail="Orden de servicio no encontrada")
+                # Delete related: payments, installments, commissions
+                for p in (await session.execute(select(ServiceOrderPaymentModel).where(ServiceOrderPaymentModel.service_order_id == id))).scalars().all():
+                    await session.delete(p)
+                for inst in (await session.execute(select(ServiceOrderInstallmentModel).where(ServiceOrderInstallmentModel.service_order_id == id))).scalars().all():
+                    await session.delete(inst)
+                for wc in (await session.execute(select(WorkshopCommissionModel).where(WorkshopCommissionModel.service_order_id == id))).scalars().all():
+                    await session.delete(wc)
+                await session.delete(so)
+                await session.commit()
+
+                return CoreResponse(
+                    success=True,
+                    status_code=200,
+                    message="Orden de servicio eliminada exitosamente",
                 )
 
         @self._router.patch("/orders/{id}/cancel", response_model=CoreResponse)
@@ -1246,3 +1579,976 @@ case(
                     status_code=200,
                     message="Orden cancelada exitosamente",
                 )
+
+        # --- Commissions ---
+
+        class CommissionItemDTO(BaseModel):
+            name: str
+            quantity: int
+            unit_price: float
+            total: float
+
+        class AdminCommissionDTO(BaseModel):
+            id: str
+            workshop_id: str
+            workshop_name: str
+            owner_id: str
+            owner_name: str
+            owner_email: str
+            order_id: str | None = None
+            service_order_id: str | None = None
+            financed_amount: float
+            commission_rate: float
+            commission_amount: float
+            period_month: int
+            period_year: int
+            status: str
+            payment_method: str | None = None
+            reference_number: str | None = None
+            rate: float | None = None
+            rate_date: str | None = None
+            created_at: str
+            paid_at: str | None = None
+            items: list[CommissionItemDTO] = []
+
+        class AdminCommissionListDTO(BaseModel):
+            commissions: list[AdminCommissionDTO]
+            total_pending: float
+            total_paid: float
+
+        @self._router.get("/commissions", response_model=CoreResponse[AdminCommissionListDTO])
+        async def list_commissions(
+            status: str | None = Query(default=None),
+            workshop_id: UUID | None = Query(default=None),
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            async with get_session() as session:
+                stmt = (
+                    select(
+                        WorkshopCommissionModel,
+                        WorkshopModel.name.label("workshop_name"),
+                        WorkshopModel.owner_id,
+                        UserModel.first_name.label("owner_first"),
+                        UserModel.last_name.label("owner_last"),
+                        UserModel.email.label("owner_email"),
+                    )
+                    .join(WorkshopModel, WorkshopModel.id == WorkshopCommissionModel.workshop_id)
+                    .join(UserModel, UserModel.id == WorkshopModel.owner_id)
+                )
+                if status:
+                    stmt = stmt.where(WorkshopCommissionModel.status == status)
+                if workshop_id:
+                    stmt = stmt.where(WorkshopCommissionModel.workshop_id == workshop_id)
+                stmt = stmt.order_by(WorkshopCommissionModel.created_at.desc())
+                r = await session.execute(stmt)
+                rows = r.all()
+
+                total_pending = sum(
+                    row[0].commission_amount for row in rows if row[0].status in ("PENDING", "PENDING_VERIFICATION")
+                )
+                total_paid = sum(
+                    row[0].commission_amount for row in rows if row[0].status == "PAID"
+                )
+
+                # Fetch order items for commissions with order_id
+                order_ids = [row[0].order_id for row in rows if row[0].order_id]
+                items_map: dict[UUID, list] = {}
+                if order_ids:
+                    items_stmt = (
+                        select(OrderItemModel)
+                        .where(OrderItemModel.order_id.in_(order_ids))
+                    )
+                    items_r = await session.execute(items_stmt)
+                    for item in items_r.scalars().all():
+                        items_map.setdefault(item.order_id, []).append(item)
+
+                commissions_list = [
+                        AdminCommissionDTO(
+                            id=str(row[0].id),
+                            workshop_id=str(row[0].workshop_id),
+                            workshop_name=row.workshop_name,
+                            owner_id=str(row.owner_id),
+                            owner_name=f"{row.owner_first} {row.owner_last}",
+                            owner_email=row.owner_email,
+                            order_id=str(row[0].order_id) if row[0].order_id else None,
+                            service_order_id=str(row[0].service_order_id) if row[0].service_order_id else None,
+                            financed_amount=row[0].financed_amount,
+                            commission_rate=row[0].commission_rate,
+                            commission_amount=row[0].commission_amount,
+                            period_month=row[0].period_month,
+                            period_year=row[0].period_year,
+                            status=row[0].status,
+                            payment_method=row[0].payment_method,
+                            reference_number=row[0].reference_number,
+                            rate=row[0].rate,
+                            rate_date=row[0].rate_date.isoformat() if row[0].rate_date else None,
+                            created_at=row[0].created_at.isoformat() if row[0].created_at else "",
+                            paid_at=row[0].paid_at.isoformat() if row[0].paid_at else None,
+                            items=[
+                                CommissionItemDTO(
+                                    name=item.part_name or f"Item {item.id}",
+                                    quantity=item.quantity,
+                                    unit_price=item.unit_price,
+                                    total=item.unit_price * item.quantity,
+                                )
+                                for item in items_map.get(row[0].order_id, [])
+                            ] if row[0].order_id else [],
+                        )
+                        for row in rows
+                    ]
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                content=AdminCommissionListDTO(
+                    commissions=commissions_list,
+                    total_pending=round(total_pending, 2),
+                    total_paid=round(total_paid, 2),
+                ),
+            )
+
+        @self._router.patch("/commissions/{id}/mark-paid", response_model=CoreResponse)
+        async def mark_commission_paid(
+            id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            async with get_session() as session:
+                commission = await session.get(WorkshopCommissionModel, id)
+                if not commission:
+                    raise HTTPException(status_code=404, detail="Comisión no encontrada")
+                if commission.status == "PAID":
+                    raise HTTPException(status_code=400, detail="La comisión ya está pagada")
+                if commission.status not in ("PENDING", "PENDING_VERIFICATION"):
+                    raise HTTPException(status_code=400, detail="La comisión no está pendiente de verificación")
+                commission.status = "PAID"
+                commission.paid_at = datetime.now(timezone.utc)
+                # Check if this was the last pending commission for this workshop
+                from sqlalchemy import select as _sel2, func as _func2
+                remaining = await session.scalar(
+                    _sel2(_func2.count(WorkshopCommissionModel.id)).where(
+                        WorkshopCommissionModel.workshop_id == commission.workshop_id,
+                        WorkshopCommissionModel.status.in_(["PENDING", "PENDING_VERIFICATION"]),
+                    )
+                )
+                if remaining is not None and remaining <= 0:
+                    ws_model = await session.get(WorkshopModel, commission.workshop_id)
+                    if ws_model:
+                        ws_model.commission_suspended = 0
+                        ws_model.is_suspended = 0
+                await session.commit()
+
+            # Notify workshop owner
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_verified_user
+                from src.config.models import User as _U, Workshop as _W
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _ws = (await _s.execute(_sel(_W).where(_W.id == commission.workshop_id))).scalars().first()
+                    if _ws:
+                        _owner = (await _s.execute(_sel(_U).where(_U.id == _ws.owner_id))).scalars().first()
+                        if _owner:
+                            await send_email(
+                                _owner.email,
+                                "Comisión verificada - AutoTech",
+                                payment_verified_user(
+                                    f"{_owner.first_name} {_owner.last_name}",
+                                    "Comisión de taller",
+                                    commission.commission_amount,
+                                    lang=_owner.language_preference or "es",
+                                ),
+                            )
+            except Exception:
+                pass
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message="Comisión verificada",
+            )
+
+        @self._router.get("/commissions/cutoff", response_model=CoreResponse)
+        async def monthly_cutoff(
+            month: int | None = Query(default=None, ge=1, le=12),
+            year: int | None = Query(default=None, ge=2020, le=2100),
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            """Get monthly cutoff summary: total commissions per workshop for a given period."""
+            now = datetime.now(timezone.utc)
+            target_month = month or now.month
+            target_year = year or now.year
+
+            async with get_session() as session:
+                stmt = (
+                    select(
+                        WorkshopCommissionModel.workshop_id,
+                        WorkshopModel.name,
+                        func.count(WorkshopCommissionModel.id).label("count"),
+                        func.coalesce(func.sum(WorkshopCommissionModel.commission_amount), 0).label("total"),
+                        func.coalesce(
+                            func.sum(
+                                case(
+                                    (WorkshopCommissionModel.status.in_(["PENDING", "PENDING_VERIFICATION"]), WorkshopCommissionModel.commission_amount),
+                                    else_=0,
+                                )
+                            ),
+                            0,
+                        ).label("pending"),
+                        func.coalesce(
+                            func.sum(
+                                case(
+                                    (WorkshopCommissionModel.status == "PAID", WorkshopCommissionModel.commission_amount),
+                                    else_=0,
+                                )
+                            ),
+                            0,
+                        ).label("paid"),
+                    )
+                    .join(WorkshopModel, WorkshopModel.id == WorkshopCommissionModel.workshop_id)
+                    .where(
+                        WorkshopCommissionModel.period_month == target_month,
+                        WorkshopCommissionModel.period_year == target_year,
+                    )
+                    .group_by(
+                        WorkshopCommissionModel.workshop_id,
+                        WorkshopModel.name,
+                    )
+                )
+                r = await session.execute(stmt)
+                rows = r.all()
+
+            class CutoffWorkshopDTO(BaseModel):
+                workshop_id: str
+                workshop_name: str
+                commission_count: int
+                total_amount: float
+                pending_amount: float
+                paid_amount: float
+
+            class CutoffSummaryDTO(BaseModel):
+                period_month: int
+                period_year: int
+                workshops: list[CutoffWorkshopDTO]
+                grand_total: float
+                grand_pending: float
+                grand_paid: float
+
+            workshops = [
+                CutoffWorkshopDTO(
+                    workshop_id=str(row.workshop_id),
+                    workshop_name=row.name,
+                    commission_count=row.count,
+                    total_amount=float(row.total),
+                    pending_amount=float(row.pending),
+                    paid_amount=float(row.paid),
+                )
+                for row in rows
+            ]
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                content=CutoffSummaryDTO(
+                    period_month=target_month,
+                    period_year=target_year,
+                    workshops=workshops,
+                    grand_total=round(sum(w.total_amount for w in workshops), 2),
+                    grand_pending=round(sum(w.pending_amount for w in workshops), 2),
+                    grand_paid=round(sum(w.paid_amount for w in workshops), 2),
+                ),
+            )
+
+        # --- Late Fees (Superadmin) ---
+
+        class AdminLateFeeDTO(BaseModel):
+            id: str
+            user_id: str
+            user_name: str
+            user_email: str
+            installment_type: str
+            installment_id: str
+            amount: float
+            status: str
+            payment_method: str
+            reference_number: str | None = None
+            rate: float | None = None
+            rate_date: str | None = None
+            paid_at: str | None = None
+            erroneous_note: str | None = None
+            created_at: str
+
+        class AdminLateFeeListDTO(BaseModel):
+            late_fees: list[AdminLateFeeDTO]
+            total_pending: float
+            total_paid: float
+
+        @self._router.get("/late-fees", response_model=CoreResponse[AdminLateFeeListDTO])
+        async def admin_list_late_fees(
+            status: str | None = Query(default=None),
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            from src.config.models import LateFee as LateFeeModel
+            async with get_session() as session:
+                stmt = (
+                    select(LateFeeModel, UserModel.first_name, UserModel.last_name, UserModel.email)
+                    .join(UserModel, UserModel.id == LateFeeModel.user_id)
+                )
+                if status:
+                    stmt = stmt.where(LateFeeModel.status == status)
+                stmt = stmt.order_by(LateFeeModel.created_at.desc())
+                r = await session.execute(stmt)
+                rows = r.all()
+
+                total_pending = sum(f.amount for f, _, _, _ in rows if f.status in ("PENDING", "PENDING_VERIFICATION"))
+                total_paid = sum(f.amount for f, _, _, _ in rows if f.status == "PAID")
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                content=AdminLateFeeListDTO(
+                    late_fees=[
+                        AdminLateFeeDTO(
+                            id=str(f.id),
+                            user_id=str(f.user_id),
+                            user_name=f"{fn} {ln}",
+                            user_email=em,
+                            installment_type=f.installment_type,
+                            installment_id=str(f.installment_id),
+                            amount=f.amount,
+                            status=f.status,
+                            payment_method=f.payment_method,
+                            reference_number=f.reference_number,
+                            rate=f.rate,
+                            rate_date=f.rate_date.isoformat() if f.rate_date else None,
+                            paid_at=f.paid_at.isoformat() if f.paid_at else None,
+                            erroneous_note=f.erroneous_note,
+                            created_at=f.created_at.isoformat() if f.created_at else "",
+                        )
+                        for f, fn, ln, em in rows
+                    ],
+                    total_pending=round(total_pending, 2),
+                    total_paid=round(total_paid, 2),
+                ),
+            )
+
+        class MarkLateFeePaidRequest(BaseModel):
+            payment_method: str = "OTHER"
+            reference_number: str | None = None
+
+        @self._router.patch("/late-fees/{id}/mark-paid", response_model=CoreResponse)
+        async def admin_mark_late_fee_paid(
+            id: UUID,
+            body: MarkLateFeePaidRequest,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            from src.config.models import LateFee as LateFeeModel
+            async with get_session() as session:
+                fee = await session.get(LateFeeModel, id)
+                if not fee:
+                    raise HTTPException(status_code=404, detail="Mora no encontrada")
+                if fee.status == "PAID":
+                    raise HTTPException(status_code=400, detail="La mora ya está pagada")
+                fee.status = "PENDING_VERIFICATION"
+                fee.payment_method = body.payment_method
+                if body.reference_number:
+                    fee.reference_number = body.reference_number
+                await session.commit()
+
+            # Send email to superadmin
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_registered_admin
+                from src.config.models import User as _U
+                from src.modules.users.infrastructure.auth import ROLE_NAME_TO_UUID as _RMAP
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _sa = (await _s.execute(_sel(_U).join(UserRoleModel, UserRoleModel.user_id == _U.id).where(UserRoleModel.role_id == _RMAP["SUPERADMIN"]))).scalars().first()
+                    _payer = (await _s.execute(_sel(_U).where(_U.id == fee.user_id))).scalars().first()
+                    if _sa and _payer:
+                        await send_email(
+                            _sa.email,
+                            "Pago de mora registrado - AutoTech",
+                            payment_registered_admin(
+                                "Mora",
+                                f"{_payer.first_name} {_payer.last_name}",
+                                fee.amount,
+                                body.payment_method,
+                                body.reference_number,
+                                lang=_sa.language_preference or "es",
+                            ),
+                        )
+            except Exception:
+                pass
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message="Pago de mora registrado. Pendiente de verificación.",
+            )
+
+        @self._router.patch("/late-fees/{id}/verify", response_model=CoreResponse)
+        async def admin_verify_late_fee(
+            id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            from src.config.models import LateFee as LateFeeModel
+            async with get_session() as session:
+                fee = await session.get(LateFeeModel, id)
+                if not fee:
+                    raise HTTPException(status_code=404, detail="Mora no encontrada")
+                if fee.status not in ("PENDING", "PENDING_VERIFICATION"):
+                    raise HTTPException(status_code=400, detail="La mora no está pendiente de verificación")
+                fee.status = "PAID"
+                fee.paid_at = datetime.now(timezone.utc)
+                await session.commit()
+
+            # Notify client
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_verified_user
+                from src.config.models import User as _U
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _user = (await _s.execute(_sel(_U).where(_U.id == fee.user_id))).scalars().first()
+                    if _user:
+                        await send_email(
+                            _user.email,
+                            "Mora verificada - AutoTech",
+                            payment_verified_user(
+                                f"{_user.first_name} {_user.last_name}",
+                                "Mora",
+                                fee.amount,
+                                lang=_user.language_preference or "es",
+                            ),
+                        )
+            except Exception:
+                pass
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message="Mora verificada",
+            )
+
+        @self._router.patch("/late-fees/{id}/mark-erroneous", response_model=CoreResponse)
+        async def admin_mark_late_fee_erroneous(
+            id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            from src.config.models import LateFee as LateFeeModel
+            async with get_session() as session:
+                fee = await session.get(LateFeeModel, id)
+                if not fee:
+                    raise HTTPException(status_code=404, detail="Mora no encontrada")
+                if fee.status == "PAID":
+                    raise HTTPException(status_code=400, detail="La mora ya está pagada")
+                fee.status = "PENDING"
+                fee.payment_method = "OTHER"
+                fee.reference_number = None
+                fee.paid_at = None
+                await session.commit()
+
+            # Notify client
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_rejected_user
+                from src.config.models import User as _U
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _user = (await _s.execute(_sel(_U).where(_U.id == fee.user_id))).scalars().first()
+                    if _user:
+                        await send_email(
+                            _user.email,
+                            "Mora rechazada - AutoTech",
+                            payment_rejected_user(
+                                f"{_user.first_name} {_user.last_name}",
+                                "Mora",
+                                fee.amount,
+                                lang=_user.language_preference or "es",
+                            ),
+                        )
+            except Exception:
+                pass
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message="Mora marcada como errónea. Puede volver a registrar el pago.",
+            )
+
+        # --- Commission payment registration (Superadmin) ---
+
+        class RegisterCommissionPaymentRequest(BaseModel):
+            payment_method: str = "BANK_TRANSFER"
+            reference_number: str | None = None
+            rate: float | None = None
+            rate_date: str | None = None
+
+        @self._router.patch("/commissions/{id}/register-payment", response_model=CoreResponse)
+        async def register_commission_payment(
+            id: UUID,
+            body: RegisterCommissionPaymentRequest,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            """Superadmin registers a payment from a workshop for their commission."""
+            async with get_session() as session:
+                commission = await session.get(WorkshopCommissionModel, id)
+                if not commission:
+                    raise HTTPException(status_code=404, detail="Comisión no encontrada")
+                if commission.status == "PAID":
+                    raise HTTPException(status_code=400, detail="La comisión ya está pagada")
+                commission.status = "PENDING_VERIFICATION"
+                commission.payment_method = body.payment_method
+                commission.reference_number = body.reference_number
+                if body.rate is not None:
+                    commission.rate = body.rate
+                if body.rate_date:
+                    try:
+                        commission.rate_date = datetime.fromisoformat(body.rate_date)
+                    except ValueError:
+                        pass
+                await session.commit()
+
+            # Send email to superadmin
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_registered_admin
+                from src.config.models import User as _U, Workshop as _W
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _sa = (await _s.execute(_sel(_U).join(UserRoleModel, UserRoleModel.user_id == _U.id).where(UserRoleModel.role_id == ROLE_NAME_TO_UUID["SUPERADMIN"]))).scalars().first()
+                    _ws = (await _s.execute(_sel(_W.name).where(_W.id == commission.workshop_id))).scalars().first()
+                    if _sa:
+                        await send_email(
+                            _sa.email,
+                            "Pago de comisión registrado - AutoTech",
+                            payment_registered_admin(
+                                "Comisión de taller",
+                                _ws or "N/A",
+                                commission.commission_amount,
+                                body.payment_method,
+                                body.reference_number,
+                                lang=_sa.language_preference or "es",
+                            ),
+                        )
+            except Exception:
+                pass
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message="Pago de comisión registrado. Pendiente de verificación.",
+            )
+
+        @self._router.patch("/commissions/{id}/mark-erroneous", response_model=CoreResponse)
+        async def mark_commission_erroneous(
+            id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            async with get_session() as session:
+                commission = await session.get(WorkshopCommissionModel, id)
+                if not commission:
+                    raise HTTPException(status_code=404, detail="Comisión no encontrada")
+                if commission.status == "PAID":
+                    raise HTTPException(status_code=400, detail="La comisión ya está pagada")
+                commission.status = "PENDING"
+                commission.payment_method = None
+                commission.reference_number = None
+                commission.paid_at = None
+                await session.commit()
+
+            # Notify workshop owner
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_rejected_user
+                from src.config.models import User as _U, Workshop as _W
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _ws = (await _s.execute(_sel(_W).where(_W.id == commission.workshop_id))).scalars().first()
+                    if _ws:
+                        _owner = (await _s.execute(_sel(_U).where(_U.id == _ws.owner_id))).scalars().first()
+                        if _owner:
+                            await send_email(
+                                _owner.email,
+                                "Comisión rechazada - AutoTech",
+                                payment_rejected_user(
+                                    f"{_owner.first_name} {_owner.last_name}",
+                                    "Comisión de taller",
+                                    commission.commission_amount,
+                                    lang=_owner.language_preference or "es",
+                                ),
+                            )
+            except Exception:
+                pass
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message="Comisión marcada como errónea. Puede volver a registrar el pago.",
+            )
+
+        @self._router.patch("/commissions/workshop/{workshop_id}/register-payment-all", response_model=CoreResponse)
+        async def register_all_commissions_payment(
+            workshop_id: UUID,
+            body: RegisterCommissionPaymentRequest,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            """Superadmin registers a single payment for ALL pending commissions of a workshop."""
+            async with get_session() as session:
+                stmt = select(WorkshopCommissionModel).where(
+                    WorkshopCommissionModel.workshop_id == workshop_id,
+                    WorkshopCommissionModel.status == "PENDING",
+                )
+                r = await session.execute(stmt)
+                commissions = r.scalars().all()
+                if not commissions:
+                    raise HTTPException(status_code=400, detail="No hay comisiones pendientes para este taller")
+
+                total_amount = 0.0
+                for comm in commissions:
+                    comm.status = "PENDING_VERIFICATION"
+                    comm.payment_method = body.payment_method
+                    comm.reference_number = body.reference_number
+                    if body.rate is not None:
+                        comm.rate = body.rate
+                    if body.rate_date:
+                        try:
+                            comm.rate_date = datetime.fromisoformat(body.rate_date)
+                        except ValueError:
+                            pass
+                    total_amount += comm.commission_amount
+                    session.add(comm)
+                await session.commit()
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message=f"Pago registrado para {len(commissions)} comisiones. Total: ${total_amount:.2f}. Pendiente de verificación.",
+            )
+
+        @self._router.patch("/commissions/workshop/{workshop_id}/mark-paid-all", response_model=CoreResponse)
+        async def mark_all_commissions_paid(
+            workshop_id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            """Superadmin marks ALL pending verification commissions of a workshop as paid."""
+            async with get_session() as session:
+                stmt = select(WorkshopCommissionModel).where(
+                    WorkshopCommissionModel.workshop_id == workshop_id,
+                    WorkshopCommissionModel.status == "PENDING_VERIFICATION",
+                )
+                r = await session.execute(stmt)
+                commissions = r.scalars().all()
+                if not commissions:
+                    raise HTTPException(status_code=400, detail="No hay comisiones pendientes de verificación para este taller")
+
+                total_amount = 0.0
+                for comm in commissions:
+                    comm.status = "PAID"
+                    comm.paid_at = datetime.now(timezone.utc)
+                    total_amount += comm.commission_amount
+                    session.add(comm)
+
+                # Auto-restore workshop since all commissions are now paid
+                ws_model = await session.get(WorkshopModel, workshop_id)
+                if ws_model:
+                    ws_model.commission_suspended = 0
+                    ws_model.is_suspended = 0
+                    session.add(ws_model)
+
+                await session.commit()
+
+            # Notify workshop owner
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_verified_user
+                from src.config.models import User as _U, Workshop as _W
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _ws = (await _s.execute(_sel(_W).where(_W.id == workshop_id))).scalars().first()
+                    if _ws:
+                        _owner = (await _s.execute(_sel(_U).where(_U.id == _ws.owner_id))).scalars().first()
+                        if _owner:
+                            await send_email(
+                                _owner.email,
+                                "Comisiones verificadas - AutoTech",
+                                payment_verified_user(
+                                    f"{_owner.first_name} {_owner.last_name}",
+                                    f"Comisiones de taller ({len(commissions)} comisiones)",
+                                    total_amount,
+                                    lang=_owner.language_preference or "es",
+                                ),
+                            )
+            except Exception:
+                pass
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message=f"{len(commissions)} comisiones verificadas. Total: ${total_amount:.2f}",
+            )
+
+        @self._router.patch("/commissions/workshop/{workshop_id}/mark-erroneous-all", response_model=CoreResponse)
+        async def mark_all_commissions_erroneous(
+            workshop_id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            """Superadmin rejects ALL pending verification commissions of a workshop back to PENDING."""
+            async with get_session() as session:
+                stmt = select(WorkshopCommissionModel).where(
+                    WorkshopCommissionModel.workshop_id == workshop_id,
+                    WorkshopCommissionModel.status == "PENDING_VERIFICATION",
+                )
+                r = await session.execute(stmt)
+                commissions = r.scalars().all()
+                if not commissions:
+                    raise HTTPException(status_code=400, detail="No hay comisiones pendientes de verificación para este taller")
+
+                total_amount = 0.0
+                for comm in commissions:
+                    comm.status = "PENDING"
+                    comm.payment_method = None
+                    comm.reference_number = None
+                    comm.paid_at = None
+                    total_amount += comm.commission_amount
+                    session.add(comm)
+                await session.commit()
+
+            # Notify workshop owner
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_rejected_user
+                from src.config.models import User as _U, Workshop as _W
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _ws = (await _s.execute(_sel(_W).where(_W.id == workshop_id))).scalars().first()
+                    if _ws:
+                        _owner = (await _s.execute(_sel(_U).where(_U.id == _ws.owner_id))).scalars().first()
+                        if _owner:
+                            await send_email(
+                                _owner.email,
+                                "Comisiones rechazadas - AutoTech",
+                                payment_rejected_user(
+                                    f"{_owner.first_name} {_owner.last_name}",
+                                    f"Comisiones de taller ({len(commissions)} comisiones)",
+                                    total_amount,
+                                    lang=_owner.language_preference or "es",
+                                ),
+                            )
+            except Exception as e:
+                import logging
+                logging.error(f"Error sending commission rejection email: {e}")
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message=f"{len(commissions)} comisiones rechazadas. Total: ${total_amount:.2f}",
+            )
+
+        # --- Admin Payment Methods (Superadmin) ---
+
+        class AdminPaymentMethodDTO(BaseModel):
+            id: str
+            label: str
+            method_type: str
+            bank_name: str | None = None
+            account_number: str | None = None
+            holder_name: str | None = None
+            holder_ci: str | None = None
+            phone: str | None = None
+            email: str | None = None
+            is_active: bool
+            created_at: str
+
+        class AdminPaymentMethodListDTO(BaseModel):
+            methods: list[AdminPaymentMethodDTO]
+
+        class CreatePaymentMethodRequest(BaseModel):
+            label: str
+            method_type: str
+            bank_name: str | None = None
+            account_number: str | None = None
+            holder_name: str | None = None
+            holder_ci: str | None = None
+            phone: str | None = None
+            email: str | None = None
+
+        @self._router.get("/payment-methods", response_model=CoreResponse[AdminPaymentMethodListDTO])
+        async def list_payment_methods(
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            from src.config.models import AdminPaymentMethod as APModel
+            async with get_session() as session:
+                stmt = select(APModel).order_by(APModel.created_at.desc())
+                r = await session.execute(stmt)
+                methods = r.scalars().all()
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                content=AdminPaymentMethodListDTO(
+                    methods=[
+                        AdminPaymentMethodDTO(
+                            id=str(m.id),
+                            label=m.label,
+                            method_type=m.method_type,
+                            bank_name=m.bank_name,
+                            account_number=m.account_number,
+                            holder_name=m.holder_name,
+                            holder_ci=m.holder_ci,
+                            phone=m.phone,
+                            email=m.email,
+                            is_active=bool(m.is_active),
+                            created_at=m.created_at.isoformat() if m.created_at else "",
+                        )
+                        for m in methods
+                    ],
+                ),
+            )
+
+        @self._router.post("/payment-methods", response_model=CoreResponse[AdminPaymentMethodDTO])
+        async def create_payment_method(
+            body: CreatePaymentMethodRequest,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            from src.config.models import AdminPaymentMethod as APModel
+            async with get_session() as session:
+                method = APModel(
+                    label=body.label,
+                    method_type=body.method_type,
+                    bank_name=body.bank_name,
+                    account_number=body.account_number,
+                    holder_name=body.holder_name,
+                    holder_ci=body.holder_ci,
+                    phone=body.phone,
+                    email=body.email,
+                )
+                session.add(method)
+                await session.flush()
+                await session.commit()
+
+            return CoreResponse(
+                success=True,
+                status_code=201,
+                message="Método de pago creado",
+                content=AdminPaymentMethodDTO(
+                    id=str(method.id),
+                    label=method.label,
+                    method_type=method.method_type,
+                    bank_name=method.bank_name,
+                    account_number=method.account_number,
+                    holder_name=method.holder_name,
+                    holder_ci=method.holder_ci,
+                    phone=method.phone,
+                    email=method.email,
+                    is_active=True,
+                    created_at=method.created_at.isoformat() if method.created_at else "",
+                ),
+            )
+
+        @self._router.patch("/payment-methods/{id}/toggle", response_model=CoreResponse)
+        async def toggle_payment_method(
+            id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            from src.config.models import AdminPaymentMethod as APModel
+            async with get_session() as session:
+                method = await session.get(APModel, id)
+                if not method:
+                    raise HTTPException(status_code=404, detail="Método de pago no encontrado")
+                method.is_active = 0 if method.is_active else 1
+                await session.commit()
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message="Método de pago actualizado",
+            )
+
+        @self._router.delete("/payment-methods/{id}", response_model=CoreResponse)
+        async def delete_payment_method(
+            id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            from src.config.models import AdminPaymentMethod as APModel
+            async with get_session() as session:
+                method = await session.get(APModel, id)
+                if not method:
+                    raise HTTPException(status_code=404, detail="Método de pago no encontrado")
+                await session.delete(method)
+                await session.commit()
+
+            return CoreResponse(
+                success=True,
+                status_code=200,
+                message="Método de pago eliminado",
+            )
+
+        # --- Superadmin: Create User ---
+
+        class SuperadminCreateUserRequest(BaseModel):
+            email: str
+            password: str
+            first_name: str
+            last_name: str
+            ci: str
+            phone: str
+            role: str  # CLIENT, WORKSHOP_OWNER, ADMIN
+            credit_level: int = 1
+            parts_credit_limit: float = 150
+            service_credit_limit: float = 50
+
+        @self._router.post("/users", response_model=CoreResponse)
+        async def superadmin_create_user(
+            body: SuperadminCreateUserRequest,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            import bcrypt
+            from src.config.models import User as UserModel, UserRole as UserRoleModel
+            from src.utils.venezuelan_validators import validate_ci, validate_phone
+
+            if body.role == "SUPERADMIN":
+                raise HTTPException(status_code=403, detail="No se puede crear un SUPERADMIN")
+
+            if body.role not in ("CLIENT", "WORKSHOP_OWNER", "ADMIN"):
+                raise HTTPException(status_code=400, detail="Rol inválido")
+
+            try:
+                validate_ci(body.ci)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="CI inválido")
+
+            try:
+                validate_phone(body.phone)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Teléfono inválido")
+
+            async with get_session() as session:
+                existing = await session.execute(
+                    select(UserModel).where(UserModel.email == body.email)
+                )
+                if existing.scalars().first():
+                    raise HTTPException(status_code=400, detail="El correo ya está registrado")
+
+                pw_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+                user = UserModel(
+                    email=body.email,
+                    password_hash=pw_hash,
+                    first_name=body.first_name,
+                    last_name=body.last_name,
+                    ci=body.ci,
+                    phone=body.phone,
+                    credit_level=body.credit_level,
+                    parts_credit_limit=body.parts_credit_limit,
+                    service_credit_limit=body.service_credit_limit,
+                )
+                session.add(user)
+                await session.flush()
+                session.add(UserRoleModel(user_id=user.id, role_id=ROLE_NAME_TO_UUID[body.role]))
+                await session.commit()
+
+            return CoreResponse(
+                success=True,
+                status_code=201,
+                message=f"Usuario {body.role} creado exitosamente",
+            )
