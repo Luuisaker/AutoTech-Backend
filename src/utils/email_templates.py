@@ -159,7 +159,14 @@ def purchase_confirmation(
             status_label, status_color = _status_map.get(status, (_s("Programado", "Scheduled", lang), "#a1a1aa"))
             paid_at = inst.get("paid_at")
             date_display = paid_at if paid_at else inst.get("due_date", "")
-            content += f"""
+            schedule_rows += f"""
+            <tr>
+              <td style="padding:8px 12px;border-bottom:1px solid #2a2a2e;color:#a1a1aa;font-size:13px;">{label}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #2a2a2e;color:#ffffff;font-size:13px;font-weight:600;">${amt:.2f}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #2a2a2e;color:#a1a1aa;font-size:13px;">{date_display}</td>
+              <td style="padding:8px 12px;border-bottom:1px solid #2a2a2e;color:{status_color};font-size:12px;font-weight:600;">{status_label}</td>
+            </tr>"""
+        content += f"""
       <p style="margin:20px 0 10px;font-size:14px;font-weight:600;color:#ffffff;">{_s("Plan de pagos", "Payment plan", lang)}</p>
       <div style="overflow-x:auto;">
         <table style="width:100%;border-collapse:collapse;background:#18181b;border-radius:8px;overflow:hidden;min-width:320px;">
