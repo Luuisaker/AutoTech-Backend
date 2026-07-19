@@ -399,7 +399,12 @@ class CreditService:
                 days_late = (now - inst.due_date).days
                 if days_late <= 0:
                     continue
-                penalty = 10 * (2 ** (days_late - 1))
+                if days_late <= 4:
+                    penalty = 3
+                elif days_late <= 7:
+                    penalty = 5
+                else:
+                    penalty = 10
                 late_fee = LateFeeModel(
                     user_id=user_id,
                     installment_type="PARTS",
@@ -439,7 +444,12 @@ class CreditService:
                 days_late = (now - inst.due_date).days
                 if days_late <= 0:
                     continue
-                penalty = 10 * (2 ** (days_late - 1))
+                if days_late <= 4:
+                    penalty = 3
+                elif days_late <= 7:
+                    penalty = 5
+                else:
+                    penalty = 10
                 late_fee = LateFeeModel(
                     user_id=user_id,
                     installment_type="SERVICE",
@@ -548,8 +558,9 @@ class CreditService:
                                 lang=_sa.language_preference or "es",
                             ),
                         )
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.error(f"Error sending superadmin late fee payment email: {e}")
 
             return Response(
                 status_code=200, success=True,

@@ -117,6 +117,7 @@ class Workshop(Base):
     was_certified: Mapped[int] = mapped_column(Integer, default=0)
     is_suspended: Mapped[int] = mapped_column(Integer, default=0)
     commission_suspended: Mapped[int] = mapped_column(Integer, default=0)
+    commission_warned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     average_rating: Mapped[float] = mapped_column(Float, default=0.0)
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -742,3 +743,23 @@ class AdminPaymentMethod(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class SupportMessage(Base):
+    __tablename__ = "support_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    subject: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(Text)
+    type: Mapped[str] = mapped_column(String(30))  # REPORT, QUESTION, SUGGESTION, COMPLAINT, OTHER
+    related_order_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING")  # PENDING, READ, RESOLVED
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    admin_note: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -41,6 +41,7 @@ routers = [
 
 class App:
     _penalty_task = None
+    _commission_task = None
 
     def __init__(self) -> None:
         if sys.platform == "win32":
@@ -62,11 +63,18 @@ class App:
     @asynccontextmanager
     async def _lifespan(self, app):
         App._penalty_task = asyncio.create_task(self._run_daily_penalties())
+        App._commission_task = asyncio.create_task(self._run_daily_commission_checks())
         yield
         if App._penalty_task:
             App._penalty_task.cancel()
             try:
                 await App._penalty_task
+            except asyncio.CancelledError:
+                pass
+        if App._commission_task:
+            App._commission_task.cancel()
+            try:
+                await App._commission_task
             except asyncio.CancelledError:
                 pass
 
@@ -227,6 +235,143 @@ class App:
             logger.info("Due-soon notifications sent")
         except Exception as e:
             logger.error(f"Failed to send due-soon notifications: {e}")
+
+    async def _run_daily_commission_checks(self, interval_hours: int = 24) -> None:
+        """Daily task: warn workshops on day 28/last day, suspend on day 2 of next month."""
+        while True:
+            try:
+                await asyncio.sleep(interval_hours * 3600)
+                await self._check_commission_warnings_and_suspensions()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in commission check scheduler: {e}")
+
+    async def _check_commission_warnings_and_suspensions(self) -> None:
+        try:
+            from src.config.database import get_session
+            from sqlalchemy import select, func, and_
+            from src.config.models import (
+                Workshop as WorkshopModel,
+                WorkshopCommission as WCModel,
+                User as UserModel,
+            )
+            from src.utils.email import send_email
+            from src.utils.email_templates import commission_due_soon, commission_overdue_suspended
+            from datetime import datetime, timezone, timedelta
+            import calendar
+
+            now = datetime.now(timezone.utc)
+            today = now.date()
+            day = today.day
+            last_day_of_month = calendar.monthrange(today.year, today.month)[1]
+
+            async with get_session() as session:
+                # --- Warning phase: day 28 or last day of month ---
+                if day == 28 or day == last_day_of_month:
+                    # Find workshops with PENDING commissions in current period that haven't been warned
+                    current_month = today.month
+                    current_year = today.year
+                    deadline_date = today.replace(day=last_day_of_month)
+                    deadline_str = deadline_date.strftime("%d/%m/%Y")
+
+                    stmt = (
+                        select(
+                            WCModel.workshop_id,
+                            func.sum(WCModel.commission_amount).label("total_pending"),
+                        )
+                        .where(
+                            WCModel.status == "PENDING",
+                            WCModel.period_year == current_year,
+                            WCModel.period_month == current_month,
+                        )
+                        .group_by(WCModel.workshop_id)
+                    )
+                    r = await session.execute(stmt)
+                    workshops_with_pending = r.all()
+
+                    for wid, total_pending in workshops_with_pending:
+                        ws = await session.get(WorkshopModel, wid)
+                        if not ws or ws.commission_warned_at is not None:
+                            continue
+                        owner = await session.get(UserModel, ws.owner_id)
+                        if not owner:
+                            continue
+                        try:
+                            await send_email(
+                                owner.email,
+                                "Comisiones por vencer - AutoTech",
+                                commission_due_soon(
+                                    workshop_name=ws.name,
+                                    owner_name=owner.first_name,
+                                    total_pending=float(total_pending or 0),
+                                    deadline=deadline_str,
+                                    lang=owner.language_preference or "es",
+                                ),
+                            )
+                        except Exception:
+                            pass
+                        ws.commission_warned_at = now
+                        session.add(ws)
+
+                    await session.commit()
+                    logger.info(f"Commission warnings sent for {len(workshops_with_pending)} workshops")
+
+                # --- Suspension phase: day 2 of next month ---
+                elif day == 2:
+                    # Previous month/year
+                    if today.month == 1:
+                        prev_month = 12
+                        prev_year = today.year - 1
+                    else:
+                        prev_month = today.month - 1
+                        prev_year = today.year
+
+                    stmt = (
+                        select(
+                            WCModel.workshop_id,
+                            func.sum(WCModel.commission_amount).label("total_pending"),
+                        )
+                        .where(
+                            WCModel.status == "PENDING",
+                            WCModel.period_year == prev_year,
+                            WCModel.period_month == prev_month,
+                        )
+                        .group_by(WCModel.workshop_id)
+                    )
+                    r = await session.execute(stmt)
+                    workshops_to_suspend = r.all()
+
+                    for wid, total_pending in workshops_to_suspend:
+                        ws = await session.get(WorkshopModel, wid)
+                        if not ws:
+                            continue
+                        ws.commission_suspended = 1
+                        ws.is_suspended = 1
+                        session.add(ws)
+
+                        owner = await session.get(UserModel, ws.owner_id)
+                        if not owner:
+                            continue
+                        try:
+                            await send_email(
+                                owner.email,
+                                "Taller suspendido por comisiones - AutoTech",
+                                commission_overdue_suspended(
+                                    workshop_name=ws.name,
+                                    owner_name=owner.first_name,
+                                    total_pending=float(total_pending or 0),
+                                    lang=owner.language_preference or "es",
+                                ),
+                            )
+                        except Exception:
+                            pass
+
+                    await session.commit()
+                    logger.info(f"Commission suspensions applied to {len(workshops_to_suspend)} workshops")
+
+        except Exception as e:
+            logger.error(f"Failed to run commission checks: {e}")
 
     def _setup_static_files(self) -> None:
         os.makedirs(settings.UPLOAD_DIR, exist_ok=True)

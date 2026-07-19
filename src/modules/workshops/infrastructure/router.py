@@ -242,8 +242,9 @@ class WorkshopRouter(BaseRouter):
                                 lang=_sa.language_preference or "es",
                             ),
                         )
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.error(f"Error sending email for commission payment {commission_id}: {e}")
 
             return CoreResponse(
                 success=True,
@@ -290,6 +291,33 @@ class WorkshopRouter(BaseRouter):
                             pass
                     total_amount += comm.commission_amount
                 await session.commit()
+
+            # Notify superadmin
+            try:
+                from src.utils.email import send_email
+                from src.utils.email_templates import payment_registered_admin
+                from src.config.models import User as _U, UserRole as _UR
+                from src.modules.users.infrastructure.auth import ROLE_NAME_TO_UUID as _RMAP
+                from sqlalchemy import select as _sel
+                async with get_session() as _s:
+                    _sa = (await _s.execute(_sel(_U).join(_UR, _UR.user_id == _U.id).where(_UR.role_id == _RMAP["SUPERADMIN"]))).scalars().first()
+                    _owner = (await _s.execute(_sel(_U).where(_U.id == current_user.id))).scalars().first()
+                    if _sa and _owner:
+                        await send_email(
+                            _sa.email,
+                            "Pago de comisión registrado - AutoTech",
+                            payment_registered_admin(
+                                "Comisión de taller",
+                                f"{_owner.first_name} {_owner.last_name}",
+                                total_amount,
+                                body.get("payment_method", "OTHER"),
+                                body.get("reference_number"),
+                                lang=_sa.language_preference or "es",
+                            ),
+                        )
+            except Exception as e:
+                import logging
+                logging.error(f"Error sending superadmin commission notification email: {e}")
 
             return CoreResponse(
                 success=True,

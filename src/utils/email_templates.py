@@ -598,10 +598,29 @@ def payment_verified_user(
     lang: str = "es",
 ) -> str:
     """Notify user/workshop owner that their payment has been verified."""
+    is_late_fee = "mora" in payment_type.lower()
     rows = [
         (_s("Tipo", "Type", lang), payment_type),
         (_s("Monto", "Amount", lang), f"${amount:.2f}"),
     ]
+
+    if is_late_fee:
+        main_msg = _s(
+            "Tu cuota de mora fue verificada. El pago fue confirmado. Ya puedes volver a comprar en el marketplace.",
+            "Your late fee has been verified. The payment has been confirmed. You can now buy again in the marketplace.",
+            lang,
+        )
+        btn_label = _s("Ir al marketplace", "Go to marketplace", lang)
+        btn_url = f"{settings.FRONTEND_URL}/dashboard/marketplace"
+    else:
+        main_msg = _s(
+            "Tu pago de comisiones fue verificado. Tu aporte nos ayuda a mantener una plataforma sostenible y crecer de la mano.",
+            "Your commission payment has been verified. Your contribution helps us maintain a sustainable platform and grow together.",
+            lang,
+        )
+        btn_label = _s("Ir al panel", "Go to panel", lang)
+        btn_url = f"{settings.FRONTEND_URL}/dashboard"
+
     content = f"""
       <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{user_name}</strong>,</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);">
@@ -617,8 +636,13 @@ def payment_verified_user(
       </div>
       {_info_table(rows)}
       {_divider()}
-      <p style="margin:0;color:#a1a1aa;font-size:13px;">
-        {_s("El pago ha sido confirmado por el administrador.", "The payment has been confirmed by the administrator.", lang)}
+      <p style="margin:0 0 16px;color:#a1a1aa;font-size:13px;">
+        {main_msg}
+      </p>
+      <p style="margin:12px 0 0;">
+        <a href="{btn_url}" style="display:inline-block;background-color:#22c55e;color:#ffffff;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:600;text-decoration:none;">
+          {btn_label}
+        </a>
       </p>"""
     return _base_template(_s("Pago verificado", "Payment verified", lang), content, accent_color="#22c55e", lang=lang)
 
@@ -630,10 +654,19 @@ def payment_rejected_user(
     lang: str = "es",
 ) -> str:
     """Notify user/workshop owner that their payment was rejected."""
+    is_late_fee = "mora" in payment_type.lower()
     rows = [
         (_s("Tipo", "Type", lang), payment_type),
         (_s("Monto", "Amount", lang), f"${amount:.2f}"),
     ]
+
+    if is_late_fee:
+        btn_label = _s("Ir a línea de crédito", "Go to credit line", lang)
+        btn_url = f"{settings.FRONTEND_URL}/dashboard/credit-line"
+    else:
+        btn_label = _s("Ir a comisiones", "Go to commissions", lang)
+        btn_url = f"{settings.FRONTEND_URL}/dashboard/my-workshops"
+
     content = f"""
       <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{user_name}</strong>,</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);">
@@ -650,7 +683,156 @@ def payment_rejected_user(
       </div>
       {_info_table(rows)}
       {_divider()}
-      <p style="margin:0;color:#a1a1aa;font-size:13px;">
-        {_s("Por favor, registra tu pago nuevamente o contacta al administrador.", "Please register your payment again or contact the administrator.", lang)}
+      <p style="margin:0 0 16px;color:#a1a1aa;font-size:13px;">
+        {_s("Tu pago no pudo ser verificado. Vuelve a registrarlo.", "Your payment could not be verified. Please register it again.", lang)}
+      </p>
+      <p style="margin:12px 0 0;">
+        <a href="{btn_url}" style="display:inline-block;background-color:#ef4444;color:#ffffff;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:600;text-decoration:none;">
+          {btn_label}
+        </a>
       </p>"""
     return _base_template(_s("Pago rechazado", "Payment rejected", lang), content, accent_color="#ef4444", lang=lang)
+
+
+def commission_due_soon(
+    workshop_name: str,
+    owner_name: str,
+    total_pending: float,
+    deadline: str,
+    lang: str = "es",
+) -> str:
+    """Warn workshop owner that commissions are due soon."""
+    rows = [
+        (_s("Taller", "Workshop", lang), workshop_name),
+        (_s("Total pendiente", "Total pending", lang), f"${total_pending:.2f}"),
+        (_s("Fecha límite", "Deadline", lang), deadline),
+    ]
+    btn_url = f"{settings.FRONTEND_URL}/dashboard/my-workshops"
+    content = f"""
+      <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{owner_name}</strong>,</p>
+      <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);">
+        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#f59e0b;display:flex;align-items:center;justify-content:center;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+        </div>
+        <div>
+          <p style="margin:0;color:#f59e0b;font-size:15px;font-weight:600;">{_s("Comisiones por vencer", "Commissions due soon", lang)}</p>
+          <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Paga antes del " + deadline, "Pay before " + deadline, lang)}</p>
+        </div>
+      </div>
+      {_info_table(rows)}
+      {_divider()}
+      <p style="margin:0 0 16px;color:#a1a1aa;font-size:13px;">
+        {_s("Si no pagas tus comisiones antes del " + deadline + ", tu taller será suspendido temporalmente y no podrá recibir nuevas órdenes financiadas. Paga ahora para evitarlo.", "If you don't pay your commissions before " + deadline + ", your workshop will be temporarily suspended and won't receive new financed orders. Pay now to avoid this.", lang)}
+      </p>
+      <p style="margin:12px 0 0;">
+        <a href="{btn_url}" style="display:inline-block;background-color:#e85d3c;color:#ffffff;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:600;text-decoration:none;">
+          {_s("Pagar comisiones", "Pay commissions", lang)}
+        </a>
+      </p>"""
+    return _base_template(_s("Comisiones por vencer", "Commissions due soon", lang), content, accent_color="#f59e0b", lang=lang)
+
+
+def commission_overdue_suspended(
+    workshop_name: str,
+    owner_name: str,
+    total_pending: float,
+    lang: str = "es",
+) -> str:
+    """Notify workshop owner that their workshop has been suspended due to unpaid commissions."""
+    rows = [
+        (_s("Taller", "Workshop", lang), workshop_name),
+        (_s("Total pendiente", "Total pending", lang), f"${total_pending:.2f}"),
+    ]
+    btn_url = f"{settings.FRONTEND_URL}/dashboard/my-workshops"
+    content = f"""
+      <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{owner_name}</strong>,</p>
+      <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);">
+        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#ef4444;display:flex;align-items:center;justify-content:center;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        </div>
+        <div>
+          <p style="margin:0;color:#ef4444;font-size:15px;font-weight:600;">{_s("Taller suspendido", "Workshop suspended", lang)}</p>
+          <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Comisiones impagas", "Unpaid commissions", lang)}</p>
+        </div>
+      </div>
+      {_info_table(rows)}
+      {_divider()}
+      <p style="margin:0 0 16px;color:#a1a1aa;font-size:13px;">
+        {_s("Tu taller ha sido suspendido por comisiones impagas. Tus clientes no podrán realizar nuevas compras financiadas en tu taller hasta que regularices tu situación. Paga tus comisiones pendientes para reactivar tu taller automáticamente.", "Your workshop has been suspended due to unpaid commissions. Your clients won't be able to make new financed purchases at your workshop until you regularize your situation. Pay your pending commissions to automatically reactivate your workshop.", lang)}
+      </p>
+      <p style="margin:12px 0 0;">
+        <a href="{btn_url}" style="display:inline-block;background-color:#ef4444;color:#ffffff;padding:12px 28px;border-radius:10px;font-size:14px;font-weight:600;text-decoration:none;">
+          {_s("Pagar comisiones", "Pay commissions", lang)}
+        </a>
+      </p>"""
+    return _base_template(_s("Taller suspendido por comisiones", "Workshop suspended due to commissions", lang), content, accent_color="#ef4444", lang=lang)
+
+
+def support_resolved(
+    user_name: str,
+    subject: str,
+    admin_note: str | None = None,
+    lang: str = "es",
+) -> str:
+    rows = [
+        (_s("Asunto", "Subject", lang), subject),
+    ]
+    content = f"""
+      <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{user_name}</strong>,</p>
+      <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);">
+        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#22c55e;display:flex;align-items:center;justify-content:center;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
+            <polyline points="20 6 9 17 4 12"></polyline>
+          </svg>
+        </div>
+        <div>
+          <p style="margin:0;color:#22c55e;font-size:15px;font-weight:600;">{_s("Solicitud resuelta", "Request resolved", lang)}</p>
+          <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Tu mensaje de soporte ha sido atendido", "Your support message has been addressed", lang)}</p>
+        </div>
+      </div>
+      {_info_table(rows)}
+      {f'<p style="margin:12px 0 0;color:#a1a1aa;font-size:13px;">{_s("Respuesta", "Response", lang)}: {admin_note}</p>' if admin_note else ''}
+      {_divider()}
+      <p style="margin:0;color:#a1a1aa;font-size:13px;">
+        {_s("Gracias por contactarnos. Si tienes otra duda, no dudes en escribirnos.", "Thank you for reaching out. If you have another question, feel free to contact us.", lang)}
+      </p>"""
+    return _base_template(_s("Soporte resuelto", "Support resolved", lang), content, accent_color="#22c55e", lang=lang)
+
+
+def support_rejected(
+    user_name: str,
+    subject: str,
+    admin_note: str | None = None,
+    lang: str = "es",
+) -> str:
+    rows = [
+        (_s("Asunto", "Subject", lang), subject),
+    ]
+    content = f"""
+      <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{user_name}</strong>,</p>
+      <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);">
+        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#ef4444;display:flex;align-items:center;justify-content:center;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </div>
+        <div>
+          <p style="margin:0;color:#ef4444;font-size:15px;font-weight:600;">{_s("Solicitud rechazada", "Request rejected", lang)}</p>
+          <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Tu mensaje de soporte no pudo ser atendido", "Your support message could not be addressed", lang)}</p>
+        </div>
+      </div>
+      {_info_table(rows)}
+      {f'<p style="margin:12px 0 0;color:#a1a1aa;font-size:13px;">{_s("Motivo", "Reason", lang)}: {admin_note}</p>' if admin_note else ''}
+      {_divider()}
+      <p style="margin:0;color:#a1a1aa;font-size:13px;">
+        {_s("Si crees que esto es un error, puedes enviar un nuevo mensaje de soporte.", "If you believe this is an error, you can send a new support message.", lang)}
+      </p>"""
+    return _base_template(_s("Soporte rechazado", "Support rejected", lang), content, accent_color="#ef4444", lang=lang)

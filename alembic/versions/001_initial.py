@@ -107,6 +107,7 @@ def upgrade() -> None:
         sa.Column("was_certified", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("is_suspended", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("commission_suspended", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("commission_warned_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("average_rating", sa.Float(), nullable=False, server_default="0.0"),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -549,7 +550,25 @@ def upgrade() -> None:
     )
 
 
+    # --- support_messages ---
+    op.create_table(
+        "support_messages",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
+        sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column("subject", sa.String(200), nullable=False),
+        sa.Column("message", sa.Text(), nullable=False),
+        sa.Column("type", sa.String(30), nullable=False),
+        sa.Column("related_order_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("status", sa.String(20), nullable=False, server_default="PENDING"),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
+        sa.Column("read_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("admin_note", sa.Text(), nullable=True),
+    )
+
+
 def downgrade() -> None:
+    op.drop_table("support_messages")
     op.drop_table("admin_payment_methods")
     op.drop_table("trusted_devices")
     op.drop_table("workshop_commissions")

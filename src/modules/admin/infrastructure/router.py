@@ -34,8 +34,9 @@ from src.config.models import (
     CreditLimitReview as CreditLimitReviewModel,
     PartPurchase as PartPurchaseModel,
     PartPayment as PartPaymentModel,
+    SupportMessage as SupportMessageModel,
 )
-from src.modules.users.infrastructure.auth import CurrentUser, ROLE_NAME_TO_UUID, ROLE_UUID_TO_NAME
+from src.modules.users.infrastructure.auth import CurrentUser, ROLE_NAME_TO_UUID, ROLE_UUID_TO_NAME, get_current_user
 from src.modules.users.infrastructure.permissions import require_admin, require_superadmin
 from src.modules.users.infrastructure.repository import UserRepository
 from src.modules.users.infrastructure.mapper import UserMapper
@@ -711,7 +712,7 @@ class AdminRouter(BaseRouter):
             search: str | None = Query(default=None),
             current_user: CurrentUser = Depends(require_admin),
         ):
-            is_superadmin = ROLE_NAME_TO_UUID["SUPERADMIN"] in current_user.roles
+            is_superadmin = "SUPERADMIN" in current_user.roles
             async with get_session() as session:
                 stmt = (
                     select(UserModel)
@@ -728,14 +729,21 @@ class AdminRouter(BaseRouter):
                 stmt = stmt.offset(offset).limit(limit).order_by(UserModel.created_at.desc())
                 r = await session.execute(stmt)
                 all_users = r.unique().scalars().all()
-                # SUPERADMIN sees all users; ADMIN cannot see other ADMINs
+                # SUPERADMIN sees all users except other SUPERADMINs; ADMIN cannot see ADMINs or SUPERADMINs
                 if is_superadmin:
-                    users = all_users
+                    users = [
+                        u
+                        for u in all_users
+                        if not any(str(role.role_id) == ROLE_NAME_TO_UUID["SUPERADMIN"] for role in u.roles)
+                    ]
                 else:
                     users = [
                         u
                         for u in all_users
-                        if not any(str(role.role_id) == ROLE_NAME_TO_UUID["ADMIN"] for role in u.roles)
+                        if not any(
+                            str(role.role_id) in (ROLE_NAME_TO_UUID["ADMIN"], ROLE_NAME_TO_UUID["SUPERADMIN"])
+                            for role in u.roles
+                        )
                     ]
 
             _mapper = UserMapper()
@@ -1534,6 +1542,33 @@ class AdminRouter(BaseRouter):
                     message="Orden eliminada exitosamente",
                 )
 
+        @self._router.post("/orders/{id}/force-close", response_model=CoreResponse)
+        async def force_close_order(
+            id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            async with get_session() as session:
+                order = await session.get(OrderModel, id)
+                if not order:
+                    raise HTTPException(status_code=404, detail="Orden no encontrada")
+                # Mark all installments as paid
+                for inst in list(order.installments):
+                    if inst.status not in ("PAID",):
+                        inst.status = "PAID"
+                        if not inst.paid_at:
+                            inst.paid_at = datetime.now(timezone.utc)
+                # Close the order
+                order.status = "CLOSED"
+                order.closed_by_client = True
+                order.closed_by_workshop = True
+                await session.commit()
+
+                return CoreResponse(
+                    success=True,
+                    status_code=200,
+                    message="Orden cerrada y marcada como pagada exitosamente",
+                )
+
         @self._router.delete("/service-orders/{id}", response_model=CoreResponse)
         async def delete_service_order(
             id: UUID,
@@ -1735,6 +1770,7 @@ class AdminRouter(BaseRouter):
                     if ws_model:
                         ws_model.commission_suspended = 0
                         ws_model.is_suspended = 0
+                        ws_model.commission_warned_at = None
                 await session.commit()
 
             # Notify workshop owner
@@ -2254,6 +2290,7 @@ class AdminRouter(BaseRouter):
                 if ws_model:
                     ws_model.commission_suspended = 0
                     ws_model.is_suspended = 0
+                    ws_model.commission_warned_at = None
                     session.add(ws_model)
 
                 await session.commit()
@@ -2552,3 +2589,398 @@ class AdminRouter(BaseRouter):
                 status_code=201,
                 message=f"Usuario {body.role} creado exitosamente",
             )
+
+        # --- Support Messages ---
+
+        class CreateSupportMessageRequest(BaseModel):
+            subject: str
+            message: str
+            type: str = "OTHER"  # REPORT, QUESTION, SUGGESTION, COMPLAINT, OTHER
+            related_order_id: str | None = None
+
+        class SupportMessageDTO(BaseModel):
+            id: str
+            user_id: str
+            user_name: str
+            user_email: str
+            subject: str
+            message: str
+            type: str
+            related_order_id: str | None
+            related_order_type: str | None = None
+            status: str
+            created_at: str
+            read_at: str | None
+            resolved_at: str | None
+            admin_note: str | None
+
+        class SupportMessageListDTO(BaseModel):
+            messages: list[SupportMessageDTO]
+            total: int
+
+        @self._router.post("/support/messages", response_model=CoreResponse)
+        async def create_support_message(
+            body: CreateSupportMessageRequest,
+            current_user: CurrentUser = Depends(get_current_user),
+        ):
+            """Any authenticated user can send a support message."""
+            async with get_session() as session:
+                msg = SupportMessageModel(
+                    user_id=current_user.id,
+                    subject=body.subject,
+                    message=body.message,
+                    type=body.type,
+                    related_order_id=UUID(body.related_order_id) if body.related_order_id else None,
+                    status="PENDING",
+                )
+                session.add(msg)
+                await session.commit()
+            return CoreResponse(
+                success=True,
+                status_code=201,
+                message="Mensaje enviado correctamente",
+            )
+
+        @self._router.get("/admin/support/messages", response_model=CoreResponse[SupportMessageListDTO])
+        async def list_support_messages(
+            status: str | None = Query(default=None),
+            _: CurrentUser = Depends(require_admin),
+        ):
+            async with get_session() as session:
+                stmt = select(SupportMessageModel, UserModel).join(
+                    UserModel, UserModel.id == SupportMessageModel.user_id
+                ).order_by(SupportMessageModel.created_at.desc())
+                if status:
+                    stmt = stmt.where(SupportMessageModel.status == status)
+                r = await session.execute(stmt)
+                results = r.unique().all()
+                # Pre-fetch order types for all related_order_ids in one pass
+                order_ids = [msg.related_order_id for msg, _ in results if msg.related_order_id]
+                order_type_map: dict[UUID, str] = {}
+                if order_ids:
+                    parts_ids = {r[0] for r in (await session.execute(select(OrderModel.id).where(OrderModel.id.in_(order_ids)))).all()}
+                    service_ids = {r[0] for r in (await session.execute(select(ServiceOrderModel.id).where(ServiceOrderModel.id.in_(order_ids)))).all()}
+                    for oid in order_ids:
+                        if oid in parts_ids:
+                            order_type_map[oid] = "PARTS"
+                        elif oid in service_ids:
+                            order_type_map[oid] = "SERVICE"
+                msgs = []
+                for msg, user in results:
+                    msgs.append(SupportMessageDTO(
+                        id=str(msg.id),
+                        user_id=str(msg.user_id),
+                        user_name=f"{user.first_name} {user.last_name}",
+                        user_email=user.email,
+                        subject=msg.subject,
+                        message=msg.message,
+                        type=msg.type,
+                        related_order_id=str(msg.related_order_id) if msg.related_order_id else None,
+                        related_order_type=order_type_map.get(msg.related_order_id) if msg.related_order_id else None,
+                        status=msg.status,
+                        created_at=msg.created_at.isoformat() if msg.created_at else "",
+                        read_at=msg.read_at.isoformat() if msg.read_at else None,
+                        resolved_at=msg.resolved_at.isoformat() if msg.resolved_at else None,
+                        admin_note=msg.admin_note,
+                    ))
+                return CoreResponse(
+                    success=True,
+                    status_code=200,
+                    content=SupportMessageListDTO(messages=msgs, total=len(msgs)),
+                )
+
+        @self._router.get("/admin/support/messages/{id}", response_model=CoreResponse[SupportMessageDTO])
+        async def get_support_message(
+            id: UUID,
+            _: CurrentUser = Depends(require_admin),
+        ):
+            async with get_session() as session:
+                msg = await session.get(SupportMessageModel, id)
+                if not msg:
+                    raise HTTPException(status_code=404, detail="Mensaje no encontrado")
+                user = await session.get(UserModel, msg.user_id)
+                related_order_type = None
+                if msg.related_order_id:
+                    if await session.get(OrderModel, msg.related_order_id):
+                        related_order_type = "PARTS"
+                    elif await session.get(ServiceOrderModel, msg.related_order_id):
+                        related_order_type = "SERVICE"
+                return CoreResponse(
+                    success=True,
+                    status_code=200,
+                    content=SupportMessageDTO(
+                        id=str(msg.id),
+                        user_id=str(msg.user_id),
+                        user_name=f"{user.first_name} {user.last_name}" if user else "N/A",
+                        user_email=user.email if user else "N/A",
+                        subject=msg.subject,
+                        message=msg.message,
+                        type=msg.type,
+                        related_order_id=str(msg.related_order_id) if msg.related_order_id else None,
+                        related_order_type=related_order_type,
+                        status=msg.status,
+                        created_at=msg.created_at.isoformat() if msg.created_at else "",
+                        read_at=msg.read_at.isoformat() if msg.read_at else None,
+                        resolved_at=msg.resolved_at.isoformat() if msg.resolved_at else None,
+                        admin_note=msg.admin_note,
+                    ),
+                )
+
+        class ResolveSupportMessageRequest(BaseModel):
+            admin_note: str | None = None
+
+        @self._router.patch("/admin/support/messages/{id}/resolve", response_model=CoreResponse)
+        async def resolve_support_message(
+            id: UUID,
+            body: ResolveSupportMessageRequest,
+            _: CurrentUser = Depends(require_admin),
+        ):
+            async with get_session() as session:
+                msg = await session.get(SupportMessageModel, id)
+                if not msg:
+                    raise HTTPException(status_code=404, detail="Mensaje no encontrado")
+                msg.status = "RESOLVED"
+                msg.resolved_at = datetime.now(timezone.utc)
+                if body.admin_note:
+                    msg.admin_note = body.admin_note
+                session.add(msg)
+                await session.commit()
+                user = await session.get(UserModel, msg.user_id)
+            # Send email notification to user in their language
+            if user:
+                try:
+                    from src.utils.email import send_email
+                    from src.utils.email_templates import support_resolved
+                    lang = getattr(user, "language_preference", "es") or "es"
+                    await send_email(
+                        user.email,
+                        "Soporte resuelto - AutoTech" if lang == "es" else "Support resolved - AutoTech",
+                        support_resolved(
+                            user_name=f"{user.first_name} {user.last_name}",
+                            subject=msg.subject,
+                            admin_note=body.admin_note,
+                            lang=lang,
+                        ),
+                    )
+                except Exception:
+                    pass
+            return CoreResponse(success=True, status_code=200, message="Mensaje resuelto")
+
+        @self._router.patch("/admin/support/messages/{id}/reject", response_model=CoreResponse)
+        async def reject_support_message(
+            id: UUID,
+            body: ResolveSupportMessageRequest,
+            _: CurrentUser = Depends(require_admin),
+        ):
+            async with get_session() as session:
+                msg = await session.get(SupportMessageModel, id)
+                if not msg:
+                    raise HTTPException(status_code=404, detail="Mensaje no encontrado")
+                msg.status = "REJECTED"
+                msg.resolved_at = datetime.now(timezone.utc)
+                if body.admin_note:
+                    msg.admin_note = body.admin_note
+                session.add(msg)
+                await session.commit()
+                user = await session.get(UserModel, msg.user_id)
+            # Send email notification to user in their language
+            if user:
+                try:
+                    from src.utils.email import send_email
+                    from src.utils.email_templates import support_rejected
+                    lang = getattr(user, "language_preference", "es") or "es"
+                    await send_email(
+                        user.email,
+                        "Soporte rechazado - AutoTech" if lang == "es" else "Support rejected - AutoTech",
+                        support_rejected(
+                            user_name=f"{user.first_name} {user.last_name}",
+                            subject=msg.subject,
+                            admin_note=body.admin_note,
+                            lang=lang,
+                        ),
+                    )
+                except Exception:
+                    pass
+            return CoreResponse(success=True, status_code=200, message="Mensaje rechazado")
+
+        # --- Late Fees Users Summary (Superadmin) ---
+
+        class LateFeeUserSummaryDTO(BaseModel):
+            user_id: str
+            user_name: str
+            user_email: str
+            late_fees_count: int
+            total_late_fees_amount: float
+            oldest_late_fee_days: int
+            total_active_debt: float
+            active_orders_count: int
+
+        class LateFeeUsersSummaryDTO(BaseModel):
+            users: list[LateFeeUserSummaryDTO]
+
+        @self._router.get("/admin/late-fees/users-summary", response_model=CoreResponse[LateFeeUsersSummaryDTO])
+        async def late_fees_users_summary(
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            """Group late fees by user, calculate days since oldest, sum active orders."""
+            async with get_session() as session:
+                # Group late fees by user
+                stmt = (
+                    select(
+                        LateFeeModel.user_id,
+                        func.count(LateFeeModel.id).label("count"),
+                        func.sum(LateFeeModel.amount).label("total_amount"),
+                        func.min(LateFeeModel.created_at).label("oldest_created"),
+                    )
+                    .where(LateFeeModel.status == "PENDING")
+                    .group_by(LateFeeModel.user_id)
+                )
+                r = await session.execute(stmt)
+                fee_groups = r.all()
+
+                summaries = []
+                now = datetime.now(timezone.utc)
+                for uid, count, total_amount, oldest_created in fee_groups:
+                    user = await session.get(UserModel, uid)
+                    if not user:
+                        continue
+                    days_old = (now - oldest_created).days if oldest_created else 0
+
+                    # Count active orders (parts + service) and their pending amounts
+                    parts_stmt = (
+                        select(func.coalesce(func.sum(InstallmentModel.amount), 0))
+                        .join(OrderModel, InstallmentModel.order_id == OrderModel.id)
+                        .where(
+                            OrderModel.user_id == uid,
+                            InstallmentModel.status.in_(["PENDING", "PENDING_VERIFICATION", "OVERDUE"]),
+                        )
+                    )
+                    parts_pending = float((await session.execute(parts_stmt)).scalar() or 0)
+
+                    svc_stmt = (
+                        select(func.coalesce(func.sum(ServiceOrderInstallmentModel.amount), 0))
+                        .join(ServiceOrderModel, ServiceOrderInstallmentModel.service_order_id == ServiceOrderModel.id)
+                        .where(
+                            ServiceOrderModel.user_id == uid,
+                            ServiceOrderInstallmentModel.status.in_(["PENDING", "PENDING_VERIFICATION", "OVERDUE"]),
+                        )
+                    )
+                    svc_pending = float((await session.execute(svc_stmt)).scalar() or 0)
+
+                    active_orders = int(
+                        (await session.execute(
+                            select(func.count(OrderModel.id)).where(
+                                OrderModel.user_id == uid,
+                                OrderModel.status.in_(["PENDING_VERIFICATION", "PENDING_CONFIRMATION", "PAID", "FINANCED", "SHIPPED", "RECEIVED"]),
+                            )
+                        )).scalar() or 0
+                    ) + int(
+                        (await session.execute(
+                            select(func.count(ServiceOrderModel.id)).where(
+                                ServiceOrderModel.user_id == uid,
+                                ServiceOrderModel.status.in_(["ACCEPTED", "IN_PROGRESS", "COMPLETED"]),
+                            )
+                        )).scalar() or 0
+                    )
+
+                    summaries.append(LateFeeUserSummaryDTO(
+                        user_id=str(uid),
+                        user_name=f"{user.first_name} {user.last_name}",
+                        user_email=user.email,
+                        late_fees_count=int(count),
+                        total_late_fees_amount=float(total_amount or 0),
+                        oldest_late_fee_days=days_old,
+                        total_active_debt=parts_pending + svc_pending,
+                        active_orders_count=active_orders,
+                    ))
+
+                return CoreResponse(
+                    success=True,
+                    status_code=200,
+                    content=LateFeeUsersSummaryDTO(users=summaries),
+                )
+
+        class UserOrderSummaryDTO(BaseModel):
+            type: str  # PARTS or SERVICE
+            id: str
+            short_id: str
+            workshop_name: str
+            total_amount: float
+            pending_amount: float
+            status: str
+            created_at: str
+
+        class UserOrdersSummaryDTO(BaseModel):
+            orders: list[UserOrderSummaryDTO]
+
+        @self._router.get("/admin/late-fees/users/{user_id}/orders", response_model=CoreResponse[UserOrdersSummaryDTO])
+        async def user_orders_summary(
+            user_id: UUID,
+            _: CurrentUser = Depends(require_superadmin),
+        ):
+            """Get active orders (parts + service) for a user with pending amounts."""
+            async with get_session() as session:
+                orders = []
+
+                # Parts orders
+                parts_stmt = (
+                    select(OrderModel, WorkshopModel)
+                    .join(WorkshopModel, WorkshopModel.id == OrderModel.workshop_id)
+                    .where(
+                        OrderModel.user_id == user_id,
+                        OrderModel.status.in_(["PENDING_VERIFICATION", "PENDING_CONFIRMATION", "PAID", "FINANCED", "SHIPPED", "RECEIVED"]),
+                    )
+                    .order_by(OrderModel.created_at.desc())
+                )
+                r = await session.execute(parts_stmt)
+                for order, ws in r.all():
+                    pending_stmt = select(func.coalesce(func.sum(InstallmentModel.amount), 0)).where(
+                        InstallmentModel.order_id == order.id,
+                        InstallmentModel.status.in_(["PENDING", "PENDING_VERIFICATION", "OVERDUE"]),
+                    )
+                    pending = float((await session.execute(pending_stmt)).scalar() or 0)
+                    orders.append(UserOrderSummaryDTO(
+                        type="PARTS",
+                        id=str(order.id),
+                        short_id=f"#{str(order.id)[:8]}",
+                        workshop_name=ws.name,
+                        total_amount=float(order.total_amount or 0),
+                        pending_amount=pending,
+                        status=order.status,
+                        created_at=order.created_at.isoformat() if order.created_at else "",
+                    ))
+
+                # Service orders
+                svc_stmt = (
+                    select(ServiceOrderModel, WorkshopModel)
+                    .join(WorkshopModel, WorkshopModel.id == ServiceOrderModel.workshop_id)
+                    .where(
+                        ServiceOrderModel.user_id == user_id,
+                        ServiceOrderModel.status.in_(["ACCEPTED", "IN_PROGRESS", "COMPLETED"]),
+                    )
+                    .order_by(ServiceOrderModel.created_at.desc())
+                )
+                r = await session.execute(svc_stmt)
+                for so, ws in r.all():
+                    pending_stmt = select(func.coalesce(func.sum(ServiceOrderInstallmentModel.amount), 0)).where(
+                        ServiceOrderInstallmentModel.service_order_id == so.id,
+                        ServiceOrderInstallmentModel.status.in_(["PENDING", "PENDING_VERIFICATION", "OVERDUE"]),
+                    )
+                    pending = float((await session.execute(pending_stmt)).scalar() or 0)
+                    total = float(so.final_price or so.base_price or 0)
+                    orders.append(UserOrderSummaryDTO(
+                        type="SERVICE",
+                        id=str(so.id),
+                        short_id=f"#{str(so.id)[:8]}",
+                        workshop_name=ws.name,
+                        total_amount=total,
+                        pending_amount=pending,
+                        status=so.status,
+                        created_at=so.created_at.isoformat() if so.created_at else "",
+                    ))
+
+                return CoreResponse(
+                    success=True,
+                    status_code=200,
+                    content=UserOrdersSummaryDTO(orders=orders),
+                )

@@ -233,12 +233,6 @@ class OrderService:
                     unpaid = r.scalars().all()
                     if unpaid:
                         total_debt = sum(c.commission_amount for c in unpaid)
-                        # Auto-suspend workshop for unpaid commissions
-                        ws_to_suspend = await t.workshop.get(wid)
-                        if ws_to_suspend:
-                            ws_to_suspend.commission_suspended = 1
-                            ws_to_suspend.is_suspended = 1
-                            await t.workshop.update(ws_to_suspend)
                         return Response(
                             status_code=403,
                             success=False,
@@ -627,10 +621,10 @@ class OrderService:
                 workshop_ids = {str(w.id) for w in workshops_owned}
                 is_owner = bool(workshop_ids.intersection(item_workshop_ids))
 
-                # Check if user is admin
+                # Check if user is admin or superadmin
                 stmt = select(UserRoleModel).where(
                     UserRoleModel.user_id == user_id,
-                    UserRoleModel.role_id == ROLE_NAME_TO_UUID["ADMIN"],
+                    UserRoleModel.role_id.in_([ROLE_NAME_TO_UUID["ADMIN"], ROLE_NAME_TO_UUID["SUPERADMIN"]]),
                 )
                 r = await t.order._session.execute(stmt)
                 is_admin = r.scalars().first() is not None
@@ -819,7 +813,7 @@ class OrderService:
 
             stmt = select(UserRoleModel).where(
                 UserRoleModel.user_id == user_id,
-                UserRoleModel.role_id == ROLE_NAME_TO_UUID["ADMIN"],
+                UserRoleModel.role_id.in_([ROLE_NAME_TO_UUID["ADMIN"], ROLE_NAME_TO_UUID["SUPERADMIN"]]),
             )
             r = await t.order._session.execute(stmt)
             is_admin = r.scalars().first() is not None
@@ -1103,7 +1097,7 @@ class OrderService:
                     message="Orden no encontrada",
                 )
 
-            # Only workshop owner or admin can mark as erroneous
+            # Only workshop owner or admin/superadmin can mark as erroneous
             items = order_model.items
             item_workshop_ids = {str(i.workshop_id) for i in items}
             workshops_owned = await t.workshop.search(owner_id=str(user_id))
@@ -1112,7 +1106,7 @@ class OrderService:
 
             stmt = select(UserRoleModel).where(
                 UserRoleModel.user_id == user_id,
-                UserRoleModel.role_id == ROLE_NAME_TO_UUID["ADMIN"],
+                UserRoleModel.role_id.in_([ROLE_NAME_TO_UUID["ADMIN"], ROLE_NAME_TO_UUID["SUPERADMIN"]]),
             )
             r = await t.order._session.execute(stmt)
             is_admin = r.scalars().first() is not None
@@ -1475,10 +1469,10 @@ class OrderService:
                     content=self._order_to_dto(order_model),
                 )
 
-            # Check if admin
+            # Check if admin or superadmin
             stmt = select(UserRoleModel).where(
                 UserRoleModel.user_id == user_id,
-                UserRoleModel.role_id == ROLE_NAME_TO_UUID["ADMIN"],
+                UserRoleModel.role_id.in_([ROLE_NAME_TO_UUID["ADMIN"], ROLE_NAME_TO_UUID["SUPERADMIN"]]),
             )
             r = await t.order._session.execute(stmt)
             if r.scalars().first() is not None:

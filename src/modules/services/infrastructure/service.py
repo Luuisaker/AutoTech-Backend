@@ -340,13 +340,10 @@ class ServiceService:
                 for c in late_comms
             )
             if has_late:
-                # Auto-suspend workshop for unpaid commissions
-                w_model.commission_suspended = 1
-                await t.service_order._session.flush()
                 return Response(
                     status_code=400,
                     success=False,
-                    message="El taller tiene comisiones atrasadas pendientes y está suspendido hasta que las pague.",
+                    message="El taller tiene comisiones atrasadas pendientes. El financiamiento está pausado hasta que las pague.",
                 )
 
             s_model = await t.service.get(str(dto.service_id))
@@ -416,7 +413,7 @@ class ServiceService:
             if so_model.user_id != user_id and not is_owner:
                 stmt = select(UserRoleModel).where(
                     UserRoleModel.user_id == user_id,
-                    UserRoleModel.role_id == ROLE_NAME_TO_UUID["ADMIN"],
+                    UserRoleModel.role_id.in_([ROLE_NAME_TO_UUID["ADMIN"], ROLE_NAME_TO_UUID["SUPERADMIN"]]),
                 )
                 r = await t.service_order._session.execute(stmt)
                 is_admin = r.scalars().first() is not None
@@ -685,6 +682,25 @@ class ServiceService:
                 return Response(status_code=400, success=False, message="No hay presupuesto pendiente por aceptar")
             so_model.status = "ACCEPTED"
             await t.service_order.update(so_model)
+
+            # Create commission record for de contado service orders (5% of total)
+            total_price = so_model.final_price or so_model.base_price
+            if total_price and total_price > 0:
+                now_dt = datetime.now(timezone.utc)
+                commission_amount = round(total_price * 0.05, 2)
+                commission = WorkshopCommissionModel(
+                    workshop_id=so_model.workshop_id,
+                    service_order_id=order_id,
+                    financed_amount=total_price,
+                    commission_rate=5.0,
+                    commission_amount=commission_amount,
+                    period_month=now_dt.month,
+                    period_year=now_dt.year,
+                    status="PENDING",
+                )
+                t.service_order._session.add(commission)
+                await t.service_order._session.flush()
+
             return Response(status_code=200, success=True, message="Presupuesto aceptado", content=self._build_service_order_dto(so_model))
 
     async def reject_quote(self, order_id: UUID, user_id: UUID) -> Response:
@@ -821,12 +837,6 @@ class ServiceService:
             unpaid_commissions = r.scalars().all()
             if unpaid_commissions:
                 total_debt = sum(c.commission_amount for c in unpaid_commissions)
-                # Auto-suspend workshop for unpaid commissions
-                ws_to_suspend = await t.workshop.get(str(so_model.workshop_id))
-                if ws_to_suspend:
-                    ws_to_suspend.commission_suspended = 1
-                    ws_to_suspend.is_suspended = 1
-                    await t.workshop.update(ws_to_suspend)
                 return Response(
                     status_code=403, success=False,
                     message=(
@@ -918,11 +928,11 @@ class ServiceService:
             await t.service_order._session.flush()
 
             # Create commission record (5% of total order amount)
-            commission_amount = round(financed_amount * 0.05, 2)
+            commission_amount = round(total_price * 0.05, 2)
             commission = WorkshopCommissionModel(
                 workshop_id=so_model.workshop_id,
                 service_order_id=order_id,
-                financed_amount=financed_amount,
+                financed_amount=total_price,
                 commission_rate=5.0,
                 commission_amount=commission_amount,
                 period_month=now_dt.month,
@@ -1053,7 +1063,7 @@ class ServiceService:
 
             admin_stmt = select(UserRoleModel).where(
                 UserRoleModel.user_id == user_id,
-                UserRoleModel.role_id == ROLE_NAME_TO_UUID["ADMIN"],
+                UserRoleModel.role_id.in_([ROLE_NAME_TO_UUID["ADMIN"], ROLE_NAME_TO_UUID["SUPERADMIN"]]),
             )
             admin_r = await t.service_order._session.execute(admin_stmt)
             is_admin = admin_r.scalars().first() is not None
@@ -1235,7 +1245,7 @@ class ServiceService:
 
             admin_stmt = select(UserRoleModel).where(
                 UserRoleModel.user_id == user_id,
-                UserRoleModel.role_id == ROLE_NAME_TO_UUID["ADMIN"],
+                UserRoleModel.role_id.in_([ROLE_NAME_TO_UUID["ADMIN"], ROLE_NAME_TO_UUID["SUPERADMIN"]]),
             )
             admin_r = await t.service_order._session.execute(admin_stmt)
             is_admin = admin_r.scalars().first() is not None
@@ -1353,8 +1363,19 @@ class ServiceService:
             if not so_model:
                 return Response(status_code=404, success=False, message="Orden de servicio no encontrada")
             w_model = await t.workshop.get(str(so_model.workshop_id))
-            if not w_model or w_model.owner_id != user_id:
-                return Response(status_code=403, success=False, message="No eres el dueño del taller")
+            is_owner = w_model and w_model.owner_id == user_id
+
+            is_admin = False
+            if not is_owner:
+                admin_stmt = select(UserRoleModel).where(
+                    UserRoleModel.user_id == user_id,
+                    UserRoleModel.role_id.in_([ROLE_NAME_TO_UUID["ADMIN"], ROLE_NAME_TO_UUID["SUPERADMIN"]]),
+                )
+                admin_r = await t.service_order._session.execute(admin_stmt)
+                is_admin = admin_r.scalars().first() is not None
+
+            if not is_owner and not is_admin:
+                return Response(status_code=403, success=False, message="No tienes permisos para verificar pagos de esta orden")
 
             payment = (
                 await t.service_order_payment._session.execute(

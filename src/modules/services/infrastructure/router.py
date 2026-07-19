@@ -531,7 +531,7 @@ class ServiceRouter(BaseRouter):
             body: MarkServiceInstallmentPaidRequest,
             response: Response,
             service: ServiceService = Depends(get_service_service),
-            current_user: CurrentUser = Depends(require_workshop_owner),
+            current_user: CurrentUser = Depends(require_admin),
         ):
             result = await service.mark_service_installment_paid(installment_id, current_user.id, body)
             handle_service_result(result, response)
@@ -545,7 +545,7 @@ class ServiceRouter(BaseRouter):
             installment_id: UUID,
             response: Response,
             service: ServiceService = Depends(get_service_service),
-            current_user: CurrentUser = Depends(require_workshop_owner),
+            current_user: CurrentUser = Depends(require_admin),
         ):
             result = await service.mark_service_installment_erroneous(installment_id, current_user.id)
             handle_service_result(result, response)
@@ -559,7 +559,7 @@ class ServiceRouter(BaseRouter):
             order_id: UUID,
             response: Response,
             service: ServiceService = Depends(get_service_service),
-            current_user: CurrentUser = Depends(require_workshop_owner),
+            current_user: CurrentUser = Depends(require_admin),
         ):
             result = await service.confirm_service_payment(order_id, current_user.id)
             handle_service_result(result, response)

@@ -28,6 +28,7 @@ class OrderRepository(GenericSQLRepository[OrderModel]):
                 selectinload(OrderModel.items).selectinload(OrderItemModel.part).selectinload(PartModel.workshop),
                 selectinload(OrderModel.installments),
                 selectinload(OrderModel.order_reviews),
+                selectinload(OrderModel.user),
             )
             .order_by(OrderModel.created_at.desc())
             .limit(limit)
