@@ -9,7 +9,7 @@ from sqlalchemy import select, func
 from src.core.domain.transaction import GenericTransaction
 from src.core.infrastructure.transaction import get_transaction
 from src.core.application.base_response import Response
-from src.modules.users.infrastructure.auth import ROLE_NAME_TO_UUID
+from src.modules.users.infrastructure.auth import ROLE_NAME_TO_UUID, ROLE_UUID_TO_NAME
 from src.config.database import get_session
 from src.config.models import User as UserModel, UserRole as UserRoleModel, Installment as InstallmentModel, Order as OrderModel, OrderItem as OrderItemModel, Workshop as WorkshopModel, CreditLimitReview as CreditLimitReviewModel, LateFee as LateFeeModel, ServiceOrderInstallment as ServiceOrderInstallmentModel, ServiceOrder as ServiceOrderModel
 from src.modules.credit.infrastructure.repository import (
@@ -637,7 +637,7 @@ class CreditService:
                 select(UserModel)
                 .join(UserRoleModel, UserRoleModel.user_id == UserModel.id)
                 .where(UserModel.deleted_at.is_(None))
-                .where(UserRoleModel.role_id == ROLE_NAME_TO_UUID["CLIENT"])
+                .where(UserRoleModel.role_id.in_([ROLE_NAME_TO_UUID["CLIENT"], ROLE_NAME_TO_UUID["WORKSHOP_OWNER"]]))
                 .order_by(UserModel.credit_level.desc())
             )
             r = await session.execute(stmt)
@@ -698,6 +698,7 @@ class CreditService:
                     user_id=u.id,
                     user_name=f"{u.first_name} {u.last_name}",
                     user_email=u.email,
+                    user_roles=[ROLE_UUID_TO_NAME.get(str(ur.role_id), "CLIENT") for ur in u.roles] if u.roles else [],
                     level=u.credit_level,
                     credit_points=round(u.credit_points, 2),
                     points_to_next_level=points_to_next,
@@ -708,6 +709,8 @@ class CreditService:
                     parts_debt=p_debt,
                     service_debt=s_debt,
                     manual_adjustment=manual_adj,
+                    client_average_rating=round(u.client_average_rating, 1) if u.client_rating_count > 0 else 0.0,
+                    client_rating_count=u.client_rating_count,
                 )
                 dtos.append(dto)
 
@@ -815,6 +818,8 @@ class CreditService:
                 service_orders_cash=service_cash,
                 service_orders_financed=service_financed,
                 manual_adjustment=manual_adj,
+                client_average_rating=round(user.client_average_rating, 1) if user.client_rating_count > 0 else 0.0,
+                client_rating_count=user.client_rating_count,
             )
             return Response(status_code=200, success=True, content=dto)
 

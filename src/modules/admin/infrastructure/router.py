@@ -150,6 +150,8 @@ class AdminUpdateUserRequest(BaseModel):
     first_name: str | None = None
     last_name: str | None = None
     phone: str | None = None
+    email: str | None = None
+    ci: str | None = None
     roles: list[str] | None = None
     is_suspended: int | None = None
     language_preference: str | None = None
@@ -775,8 +777,9 @@ class AdminRouter(BaseRouter):
         async def update_user(
             id: UUID,
             body: AdminUpdateUserRequest,
-            _: CurrentUser = Depends(require_admin),
+            current_user: CurrentUser = Depends(require_admin),
         ):
+            is_superadmin = "SUPERADMIN" in current_user.roles
             async with get_session() as session:
                 repo = UserRepository(session)
                 user = await repo.get(str(id))
@@ -789,9 +792,14 @@ class AdminRouter(BaseRouter):
                     user.last_name = body.last_name
                 if body.phone is not None:
                     user.phone = body.phone
+                # Only superadmin can change email and ci
+                if body.email is not None and is_superadmin:
+                    user.email = body.email
+                if body.ci is not None and is_superadmin:
+                    user.ci = body.ci
                 if body.roles is not None:
-                    # Prevent assigning ADMIN role through admin panel
-                    if "ADMIN" in body.roles:
+                    # Only superadmin can assign ADMIN role
+                    if "ADMIN" in body.roles and not is_superadmin:
                         raise HTTPException(
                             status_code=400,
                             detail="No puedes asignar el rol de administrador",
@@ -800,6 +808,15 @@ class AdminRouter(BaseRouter):
                     new_roles = set(body.roles)
                     had_owner = "WORKSHOP_OWNER" in old_roles
                     has_owner = "WORKSHOP_OWNER" in new_roles
+
+                    # Non-superadmin cannot remove WORKSHOP_OWNER if user has open orders
+                    if had_owner and not has_owner and not is_superadmin:
+                        open_count = await _count_open_orders(session, "users", id)
+                        if open_count > 0:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"No puedes quitar el rol de dueño de taller porque el usuario tiene {open_count} orden(es) abierta(s)",
+                            )
 
                     # Remove existing roles and set new ones
                     for r in list(user.roles):
@@ -834,13 +851,25 @@ class AdminRouter(BaseRouter):
                     user.is_suspended = body.is_suspended
 
                 await session.commit()
-                await session.refresh(user)
+
+                # Re-query with eager-loaded roles to avoid MissingGreenlet
+                refreshed = (
+                    await session.execute(
+                        select(UserModel)
+                        .options(selectinload(UserModel.roles))
+                        .where(UserModel.id == id)
+                    )
+                ).scalars().first()
+                user_dto = user_to_dto(refreshed) if refreshed else None
+
+            if not user_dto:
+                raise HTTPException(status_code=500, detail="Error al actualizar usuario")
 
             return CoreResponse(
                 success=True,
                 status_code=200,
                 message="Usuario actualizado exitosamente",
-                content=user_to_dto(user),
+                content=user_dto,
             )
 
         @self._router.delete("/users/{id}", response_model=CoreResponse)
@@ -864,7 +893,11 @@ class AdminRouter(BaseRouter):
                 now = datetime.now(timezone.utc)
 
                 # Cascade soft-delete: orders (as buyer)
-                orders_stmt = select(OrderModel).where(OrderModel.user_id == id, OrderModel.deleted_at.is_(None))
+                orders_stmt = (
+                    select(OrderModel)
+                    .options(selectinload(OrderModel.installments), selectinload(OrderModel.items))
+                    .where(OrderModel.user_id == id, OrderModel.deleted_at.is_(None))
+                )
                 for o in (await session.execute(orders_stmt)).scalars().all():
                     o.deleted_at = now
                     for inst in list(o.installments):
@@ -1045,7 +1078,11 @@ class AdminRouter(BaseRouter):
                 oi_stmt = select(OrderItemModel.order_id).where(OrderItemModel.workshop_id == id, OrderItemModel.deleted_at.is_(None))
                 order_ids = [row[0] for row in (await session.execute(oi_stmt)).all()]
                 if order_ids:
-                    for o in (await session.execute(select(OrderModel).where(OrderModel.id.in_(order_ids)))).scalars().all():
+                    for o in (await session.execute(
+                        select(OrderModel)
+                        .options(selectinload(OrderModel.installments), selectinload(OrderModel.items))
+                        .where(OrderModel.id.in_(order_ids))
+                    )).scalars().all():
                         o.deleted_at = now
                         for inst in list(o.installments):
                             inst.deleted_at = now
@@ -1516,7 +1553,13 @@ class AdminRouter(BaseRouter):
             _: CurrentUser = Depends(require_superadmin),
         ):
             async with get_session() as session:
-                order = await session.get(OrderModel, id)
+                order = (
+                    await session.execute(
+                        select(OrderModel)
+                        .options(selectinload(OrderModel.installments), selectinload(OrderModel.items))
+                        .where(OrderModel.id == id)
+                    )
+                ).scalars().first()
                 if not order:
                     raise HTTPException(status_code=404, detail="Orden no encontrada")
                 now = datetime.now(timezone.utc)
@@ -1548,7 +1591,13 @@ class AdminRouter(BaseRouter):
             _: CurrentUser = Depends(require_superadmin),
         ):
             async with get_session() as session:
-                order = await session.get(OrderModel, id)
+                order = (
+                    await session.execute(
+                        select(OrderModel)
+                        .options(selectinload(OrderModel.installments))
+                        .where(OrderModel.id == id)
+                    )
+                ).scalars().first()
                 if not order:
                     raise HTTPException(status_code=404, detail="Orden no encontrada")
                 # Mark all installments as paid

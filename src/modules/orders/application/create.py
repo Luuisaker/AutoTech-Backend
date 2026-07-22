@@ -64,6 +64,8 @@ class OrderDTO(BaseModel):
     user_last_name: str
     user_ci: str
     user_email: str
+    user_client_rating: float | None = None
+    user_client_rating_count: int | None = None
     items: list[OrderItemDTO]
     closed_by_client: bool = False
     closed_by_workshop: bool = False

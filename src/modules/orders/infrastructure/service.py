@@ -61,6 +61,7 @@ from src.config.models import (
     OrderReview as OrderReviewModel,
     WorkshopCommission as WorkshopCommissionModel,
     User as UserModel,
+    ServiceOrder as ServiceOrderModel,
 )
 from src.modules.parts.infrastructure.repository import (
     VehicleHistoryLogRepository,
@@ -470,7 +471,7 @@ class OrderService:
                     from src.config.models import Workshop as _WM
                     _ws = await t.order._session.get(_WM, o.items[0].workshop_id)
                     ws_name = _ws.name if _ws else "AutoTech"
-                insts = o.installments or []
+                insts = sorted(o.installments or [], key=lambda x: x.due_date or datetime.min.replace(tzinfo=timezone.utc))
                 _email_order_data.append({
                     "order_id": str(o.id),
                     "workshop_name": ws_name,
@@ -709,10 +710,10 @@ class OrderService:
                     message="Esta cuota ya tiene un pago pendiente de verificación",
                 )
 
-            # Validate payment date is not before order creation date
+            # Validate payment date is not before order creation date (compare dates only)
             if dto.paid_at:
                 payment_date = dto.paid_at if isinstance(dto.paid_at, datetime) else datetime.fromisoformat(str(dto.paid_at))
-                if payment_date.replace(tzinfo=timezone.utc) < order_model.created_at:
+                if payment_date.replace(tzinfo=timezone.utc).date() < order_model.created_at.date():
                     return Response(
                         status_code=400,
                         success=False,
@@ -837,7 +838,16 @@ class OrderService:
             if dto.paid_at:
                 inst_model.paid_at = dto.paid_at
             elif not inst_model.paid_at:
-                inst_model.paid_at = datetime.now(timezone.utc)
+                # For the initial installment (first one), paid_at = order creation date
+                installments = sorted(
+                    order_model.installments,
+                    key=lambda x: x.due_date or datetime.min.replace(tzinfo=timezone.utc),
+                )
+                is_initial = len(installments) > 0 and inst_model.id == installments[0].id
+                if is_initial:
+                    inst_model.paid_at = order_model.created_at
+                else:
+                    inst_model.paid_at = datetime.now(timezone.utc)
             if dto.reference_number:
                 inst_model.reference_number = dto.reference_number
             
@@ -938,13 +948,12 @@ class OrderService:
                 if paid_at and paid_at.tzinfo is None:
                     paid_at = paid_at.replace(tzinfo=timezone.utc)
                 all_inst_for_ref = await t.installment.list_by_order(str(order_model.id))
-                all_inst_sorted = sorted(all_inst_for_ref, key=lambda x: x.created_at)
+                all_inst_sorted = sorted(all_inst_for_ref, key=lambda x: x.due_date or datetime.min.replace(tzinfo=timezone.utc))
                 is_initial = len(all_inst_sorted) > 0 and inst_model.id == all_inst_sorted[0].id
                 if is_initial:
-                    ref_date = order_model.created_at
-                    if ref_date and ref_date.tzinfo is None:
-                        ref_date = ref_date.replace(tzinfo=timezone.utc)
-                    is_on_time = paid_at is None or paid_at <= ref_date + timedelta(hours=48)
+                    # Initial installment (down payment) does NOT earn points
+                    is_on_time = False
+                    logger.info(f"Credit points NOT added for initial installment {inst_model.id} (down payment)")
                 else:
                     due_date = inst_model.due_date
                     if due_date and due_date.tzinfo is None:
@@ -952,9 +961,9 @@ class OrderService:
                     is_on_time = paid_at is None or paid_at <= due_date
                 if is_on_time:
                     order_user.credit_points = round(order_user.credit_points + inst_model.amount, 2)
-                    logger.info(f"Credit points +{inst_model.amount} for user {order_user.id} (initial={is_initial}, on_time). Total: {order_user.credit_points}")
+                    logger.info(f"Credit points +{inst_model.amount} for user {order_user.id} (on_time). Total: {order_user.credit_points}")
                 else:
-                    logger.info(f"Credit points NOT added for installment {inst_model.id} (initial={is_initial}, paid_at={paid_at}, due_date={inst_model.due_date})")
+                    logger.info(f"Credit points NOT added for installment {inst_model.id} (paid_at={paid_at}, due_date={inst_model.due_date})")
 
                 await t.user.update(order_user)
                 await t.credit_history.add_entry(
@@ -1009,7 +1018,7 @@ class OrderService:
             async with _gs() as _sess:
                 _u_stmt = select(_UM).where(_UM.id == _email_order_user_id)
                 _u = (await _sess.execute(_u_stmt)).scalars().first()
-                _inst_stmt = select(_IM).where(_IM.order_id == _email_order_id, _IM.deleted_at.is_(None))
+                _inst_stmt = select(_IM).where(_IM.order_id == _email_order_id, _IM.deleted_at.is_(None)).order_by(_IM.due_date)
                 _all_insts = list((await _sess.execute(_inst_stmt)).scalars().all())
                 _inst_num = next((i for i, inst in enumerate(_all_insts) if str(inst.id) == str(_email_inst_id)), -1) + 1
                 if _inst_num == 0:
@@ -1227,7 +1236,7 @@ class OrderService:
             async with _gs() as _sess:
                 _u_stmt = select(_UM).where(_UM.id == _email_order_user_id)
                 _u = (await _sess.execute(_u_stmt)).scalars().first()
-                _inst_stmt = select(_IM).where(_IM.order_id == _email_order_id, _IM.deleted_at.is_(None))
+                _inst_stmt = select(_IM).where(_IM.order_id == _email_order_id, _IM.deleted_at.is_(None)).order_by(_IM.due_date)
                 _all_insts = list((await _sess.execute(_inst_stmt)).scalars().all())
                 _inst_num = next((i for i, inst in enumerate(_all_insts) if str(inst.id) == str(_email_inst_id)), -1) + 1
                 if _inst_num == 0:
@@ -1714,6 +1723,30 @@ class OrderService:
             t.order._session.add(review)
             await t.order._session.flush()
 
+            # Recompute user's aggregate rating from all sources
+            client_user_id = order_model.user_id
+            u_model = await t.order._session.get(UserModel, client_user_id)
+            if u_model:
+                # Purchase order reviews targeting this client
+                or_stmt = select(OrderReviewModel.rating).where(
+                    OrderReviewModel.target_role == "CLIENT",
+                    OrderReviewModel.order_id.in_(
+                        select(OrderModel.id).where(OrderModel.user_id == client_user_id)
+                    ),
+                )
+                or_ratings = [row[0] for row in (await t.order._session.execute(or_stmt)) if row[0] is not None]
+                # Service order workshop ratings for this client
+                so_stmt = select(ServiceOrderModel.workshop_rating).where(
+                    ServiceOrderModel.user_id == client_user_id,
+                    ServiceOrderModel.workshop_rating.isnot(None),
+                )
+                so_ratings = [row[0] for row in (await t.order._session.execute(so_stmt)) if row[0] is not None]
+                all_ratings = or_ratings + so_ratings
+                if all_ratings:
+                    u_model.client_average_rating = round(sum(all_ratings) / len(all_ratings), 1)
+                    u_model.client_rating_count = len(all_ratings)
+                    await t.order._session.flush()
+
             return Response(
                 status_code=200,
                 success=True,
@@ -1779,6 +1812,8 @@ class OrderService:
             user_last_name=o.user.last_name if o.user else "",
             user_ci=o.user.ci if o.user else "",
             user_email=o.user.email if o.user else "",
+            user_client_rating=o.user.client_average_rating if o.user and o.user.client_rating_count > 0 else None,
+            user_client_rating_count=o.user.client_rating_count if o.user else None,
             closed_by_client=bool(o.closed_by_client),
             closed_by_workshop=bool(o.closed_by_workshop),
             items=[

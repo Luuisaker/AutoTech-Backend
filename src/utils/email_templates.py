@@ -27,17 +27,9 @@ def _favicon_data_uri() -> str | None:
 
 
 def _inline_favicon_svg() -> str:
-    """Return inline SVG for the robot icon, suitable for email clients that don't render SVG img tags."""
-    return '''<svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="28" height="28" style="vertical-align:middle;margin-right:10px;flex-shrink:0;" xmlns="http://www.w3.org/2000/svg">
-  <rect x="4" y="4" width="16" height="12" rx="2" />
-  <circle cx="9" cy="9" r="1.5" fill="#ffffff" stroke="none" />
-  <circle cx="15" cy="9" r="1.5" fill="#ffffff" stroke="none" />
-  <path d="M8 14h8" />
-  <path d="M6 16v3" />
-  <path d="M18 16v3" />
-  <path d="M12 16v4" />
-  <path d="M10 20h4" />
-</svg>'''
+    """Return hosted PNG logo for email clients."""
+    base_url = getattr(settings, "FRONTEND_URL", "") or ""
+    return f'<img src="{base_url}/email-icons/logo.png" width="28" height="28" alt="AutoTech" style="vertical-align:middle;margin-right:10px;flex-shrink:0;" />'
 
 
 def _base_template(title: str, content: str, accent_color: str = "#e85d3c", lang: str = "es") -> str:
@@ -211,14 +203,11 @@ def installment_verified(
     ]
     if next_due_date:
         rows.append((_s("Próximo vencimiento", "Next due date", lang), next_due_date))
+    base_url = getattr(settings, "FRONTEND_URL", "") or ""
     content = f"""
       <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{buyer_name}</strong>,</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);">
-        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#22c55e;display:flex;align-items:center;justify-content:center;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-            <polyline points="20 6 9 17 4 12"></polyline>
-          </svg>
-        </div>
+        <img src="{base_url}/email-icons/check-green.png" width="40" height="40" alt="✓" style="flex-shrink:0;" />
         <div>
           <p style="margin:0;color:#22c55e;font-size:15px;font-weight:600;">{_s("Pago verificado", "Payment verified", lang)}</p>
           <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Tu pago ha sido confirmado correctamente", "Your payment has been confirmed successfully", lang)}</p>
@@ -291,15 +280,11 @@ def installment_rejected(
         (_s("Cuota", "Installment", lang), f"#{installment_number}"),
         (_s("Monto", "Amount", lang), f"${amount:.2f}"),
     ]
+    base_url = getattr(settings, "FRONTEND_URL", "") or ""
     content = f"""
       <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{buyer_name}</strong>,</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);">
-        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#ef4444;display:flex;align-items:center;justify-content:center;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </div>
+        <img src="{base_url}/email-icons/x-red.png" width="40" height="40" alt="✕" style="flex-shrink:0;" />
         <div>
           <p style="margin:0;color:#ef4444;font-size:15px;font-weight:600;">{_s("Pago rechazado", "Payment rejected", lang)}</p>
           <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Tu pago no pudo ser verificado", "Your payment could not be verified", lang)}</p>
@@ -563,16 +548,11 @@ def payment_registered_admin(
     ]
     if reference:
         rows.append((_s("Referencia", "Reference", lang), reference))
+    base_url = getattr(settings, "FRONTEND_URL", "") or ""
     content = f"""
       <p style="margin:0 0 16px;">{_s("Se ha registrado un nuevo pago que requiere verificación.", "A new payment has been registered and requires verification.", lang)}</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);">
-        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#f59e0b;display:flex;align-items:center;justify-content:center;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="8" x2="12" y2="12"></line>
-            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-          </svg>
-        </div>
+        <img src="{base_url}/email-icons/warning-amber.png" width="40" height="40" alt="!" style="flex-shrink:0;" />
         <div>
           <p style="margin:0;color:#f59e0b;font-size:15px;font-weight:600;">{_s("Pago pendiente de verificación", "Payment pending verification", lang)}</p>
           <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Revisa y verifica el pago lo antes posible", "Review and verify the payment as soon as possible", lang)}</p>
@@ -621,14 +601,11 @@ def payment_verified_user(
         btn_label = _s("Ir al panel", "Go to panel", lang)
         btn_url = f"{settings.FRONTEND_URL}/dashboard"
 
+    base_url = getattr(settings, "FRONTEND_URL", "") or ""
     content = f"""
       <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{user_name}</strong>,</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);">
-        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#22c55e;display:flex;align-items:center;justify-content:center;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-            <polyline points="20 6 9 17 4 12"></polyline>
-          </svg>
-        </div>
+        <img src="{base_url}/email-icons/check-green.png" width="40" height="40" alt="✓" style="flex-shrink:0;" />
         <div>
           <p style="margin:0;color:#22c55e;font-size:15px;font-weight:600;">{_s("Pago verificado", "Payment verified", lang)}</p>
           <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Tu pago ha sido confirmado correctamente", "Your payment has been confirmed successfully", lang)}</p>
@@ -667,15 +644,11 @@ def payment_rejected_user(
         btn_label = _s("Ir a comisiones", "Go to commissions", lang)
         btn_url = f"{settings.FRONTEND_URL}/dashboard/my-workshops"
 
+    base_url = getattr(settings, "FRONTEND_URL", "") or ""
     content = f"""
       <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{user_name}</strong>,</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);">
-        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#ef4444;display:flex;align-items:center;justify-content:center;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </div>
+        <img src="{base_url}/email-icons/x-red.png" width="40" height="40" alt="✕" style="flex-shrink:0;" />
         <div>
           <p style="margin:0;color:#ef4444;font-size:15px;font-weight:600;">{_s("Pago rechazado", "Payment rejected", lang)}</p>
           <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Tu pago no pudo ser verificado", "Your payment could not be verified", lang)}</p>
@@ -708,15 +681,11 @@ def commission_due_soon(
         (_s("Fecha límite", "Deadline", lang), deadline),
     ]
     btn_url = f"{settings.FRONTEND_URL}/dashboard/my-workshops"
+    base_url = getattr(settings, "FRONTEND_URL", "") or ""
     content = f"""
       <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{owner_name}</strong>,</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);">
-        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#f59e0b;display:flex;align-items:center;justify-content:center;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-          </svg>
-        </div>
+        <img src="{base_url}/email-icons/clock-amber.png" width="40" height="40" alt="⏰" style="flex-shrink:0;" />
         <div>
           <p style="margin:0;color:#f59e0b;font-size:15px;font-weight:600;">{_s("Comisiones por vencer", "Commissions due soon", lang)}</p>
           <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Paga antes del " + deadline, "Pay before " + deadline, lang)}</p>
@@ -747,16 +716,11 @@ def commission_overdue_suspended(
         (_s("Total pendiente", "Total pending", lang), f"${total_pending:.2f}"),
     ]
     btn_url = f"{settings.FRONTEND_URL}/dashboard/my-workshops"
+    base_url = getattr(settings, "FRONTEND_URL", "") or ""
     content = f"""
       <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{owner_name}</strong>,</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);">
-        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#ef4444;display:flex;align-items:center;justify-content:center;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-            <circle cx="12" cy="12" r="10"></circle>
-            <line x1="12" y1="8" x2="12" y2="12"></line>
-            <line x1="12" y1="16" x2="12.01" y2="16"></line>
-          </svg>
-        </div>
+        <img src="{base_url}/email-icons/warning-amber.png" width="40" height="40" alt="!" style="flex-shrink:0;" />
         <div>
           <p style="margin:0;color:#ef4444;font-size:15px;font-weight:600;">{_s("Taller suspendido", "Workshop suspended", lang)}</p>
           <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Comisiones impagas", "Unpaid commissions", lang)}</p>
@@ -784,14 +748,11 @@ def support_resolved(
     rows = [
         (_s("Asunto", "Subject", lang), subject),
     ]
+    base_url = getattr(settings, "FRONTEND_URL", "") or ""
     content = f"""
       <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{user_name}</strong>,</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);">
-        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#22c55e;display:flex;align-items:center;justify-content:center;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-            <polyline points="20 6 9 17 4 12"></polyline>
-          </svg>
-        </div>
+        <img src="{base_url}/email-icons/check-green.png" width="40" height="40" alt="✓" style="flex-shrink:0;" />
         <div>
           <p style="margin:0;color:#22c55e;font-size:15px;font-weight:600;">{_s("Solicitud resuelta", "Request resolved", lang)}</p>
           <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Tu mensaje de soporte ha sido atendido", "Your support message has been addressed", lang)}</p>
@@ -815,15 +776,11 @@ def support_rejected(
     rows = [
         (_s("Asunto", "Subject", lang), subject),
     ]
+    base_url = getattr(settings, "FRONTEND_URL", "") or ""
     content = f"""
       <p style="margin:0 0 16px;">{_s("Hola", "Hello", lang)} <strong style="color:#ffffff;">{user_name}</strong>,</p>
       <div style="display:flex;align-items:center;gap:12px;margin:0 0 20px;padding:16px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);">
-        <div style="flex-shrink:0;width:40px;height:40px;border-radius:50%;background:#ef4444;display:flex;align-items:center;justify-content:center;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" width="20" height="20" xmlns="http://www.w3.org/2000/svg">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </div>
+        <img src="{base_url}/email-icons/x-red.png" width="40" height="40" alt="✕" style="flex-shrink:0;" />
         <div>
           <p style="margin:0;color:#ef4444;font-size:15px;font-weight:600;">{_s("Solicitud rechazada", "Request rejected", lang)}</p>
           <p style="margin:2px 0 0;color:#a1a1aa;font-size:13px;">{_s("Tu mensaje de soporte no pudo ser atendido", "Your support message could not be addressed", lang)}</p>

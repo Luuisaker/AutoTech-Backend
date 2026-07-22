@@ -61,6 +61,7 @@ class AdminCreditLineDTO(BaseModel):
     user_id: UUID
     user_name: str
     user_email: str
+    user_roles: list[str] = []
     level: int
     credit_points: float
     points_to_next_level: float | None = None
@@ -82,6 +83,8 @@ class AdminCreditLineDTO(BaseModel):
     service_installments_on_time: int = 0
     service_installments_late: int = 0
     manual_adjustment: float | None = None
+    client_average_rating: float = 0.0
+    client_rating_count: int = 0
 
 
 class AdminCreditLineListDTO(BaseModel):

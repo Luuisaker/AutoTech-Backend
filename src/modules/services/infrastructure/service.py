@@ -47,6 +47,8 @@ from src.config.models import ServiceOrderPayment as ServiceOrderPaymentModel
 from src.config.models import ServiceOrderInstallment as ServiceOrderInstallmentModel
 from src.config.models import WorkshopCommission as WorkshopCommissionModel
 from src.config.models import User as UserModel
+from src.config.models import OrderReview as OrderReviewModel
+from src.config.models import Order as OrderModel
 from src.modules.credit.infrastructure.repository import CreditLevelRepository, CreditHistoryRepository, LateFeeRepository
 from src.modules.credit.infrastructure.service import CreditService
 
@@ -1780,15 +1782,26 @@ class ServiceService:
 
             u_model = await t.user.get(str(so_model.user_id))
             if u_model:
+                # Service order workshop ratings for this client
                 all_so_ratings = select(ServiceOrderModel.workshop_rating).where(
                     ServiceOrderModel.user_id == so_model.user_id,
                     ServiceOrderModel.workshop_rating.isnot(None),
                 )
                 r = await t.user._session.execute(all_so_ratings)
-                ratings = [row[0] for row in r if row[0] is not None]
-                if ratings:
-                    u_model.client_average_rating = round(sum(ratings) / len(ratings), 1)
-                    u_model.client_rating_count = len(ratings)
+                so_ratings = [row[0] for row in r if row[0] is not None]
+                # Purchase order reviews targeting this client
+                or_stmt = select(OrderReviewModel.rating).where(
+                    OrderReviewModel.target_role == "CLIENT",
+                    OrderReviewModel.order_id.in_(
+                        select(OrderModel.id).where(OrderModel.user_id == so_model.user_id)
+                    ),
+                )
+                or_r = await t.user._session.execute(or_stmt)
+                or_ratings = [row[0] for row in or_r if row[0] is not None]
+                all_ratings = so_ratings + or_ratings
+                if all_ratings:
+                    u_model.client_average_rating = round(sum(all_ratings) / len(all_ratings), 1)
+                    u_model.client_rating_count = len(all_ratings)
                     await t.user.update(u_model)
 
             return Response(status_code=200, success=True, message="Cliente calificado exitosamente", content=self._build_service_order_dto(so_model))

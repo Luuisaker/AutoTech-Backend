@@ -39,6 +39,8 @@ class UserDTO(BaseModel):
     phone: str | None
     photo_url: str | None = None
     is_suspended: int = 0
+    client_average_rating: float = 0.0
+    client_rating_count: int = 0
     credit_level: int = 1
     parts_credit_limit: float = 150.0
     service_credit_limit: float = 50.0
