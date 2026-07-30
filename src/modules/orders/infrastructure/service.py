@@ -940,10 +940,8 @@ class OrderService:
                         reference_id=inst_model.id,
                     )
 
-                # 3. Points on time: if paid_at <= due_date, grant inst.amount points
-                # For the initial installment (first one created at checkout), use
-                # order.created_at as reference instead of due_date, since due_date = now
-                # at checkout time and the workshop verifies later, making paid_at > due_date.
+                # 3. Points on time: if paid_at <= due_date, grant points
+                # Financing incentive: 1.5x points for financed installments, 0.5x for initial/de contado
                 paid_at = inst_model.paid_at
                 if paid_at and paid_at.tzinfo is None:
                     paid_at = paid_at.replace(tzinfo=timezone.utc)
@@ -951,18 +949,26 @@ class OrderService:
                 all_inst_sorted = sorted(all_inst_for_ref, key=lambda x: x.due_date or datetime.min.replace(tzinfo=timezone.utc))
                 is_initial = len(all_inst_sorted) > 0 and inst_model.id == all_inst_sorted[0].id
                 if is_initial:
-                    # Initial installment (down payment) does NOT earn points
-                    is_on_time = False
-                    logger.info(f"Credit points NOT added for initial installment {inst_model.id} (down payment)")
+                    # Initial / de contado: 0.5x points (rewards purchases, but less than financing)
+                    points_multiplier = 0.5
+                    _ref_date = order_model.created_at
+                    if _ref_date and _ref_date.tzinfo is None:
+                        _ref_date = _ref_date.replace(tzinfo=timezone.utc)
+                    from datetime import timedelta
+                    is_on_time = paid_at is None or paid_at <= _ref_date + timedelta(hours=48)
                 else:
+                    # Financed installments: 1.5x points (incentivizes financing)
+                    points_multiplier = 1.5
                     due_date = inst_model.due_date
                     if due_date and due_date.tzinfo is None:
                         due_date = due_date.replace(tzinfo=timezone.utc)
                     is_on_time = paid_at is None or paid_at <= due_date
                 if is_on_time:
-                    order_user.credit_points = round(order_user.credit_points + inst_model.amount, 2)
-                    logger.info(f"Credit points +{inst_model.amount} for user {order_user.id} (on_time). Total: {order_user.credit_points}")
+                    points_earned = round(inst_model.amount * points_multiplier, 2)
+                    order_user.credit_points = round(order_user.credit_points + points_earned, 2)
+                    logger.info(f"Credit points +{points_earned} for user {order_user.id} (on time, {points_multiplier}x). Total: {order_user.credit_points}")
                 else:
+                    points_earned = 0
                     logger.info(f"Credit points NOT added for installment {inst_model.id} (paid_at={paid_at}, due_date={inst_model.due_date})")
 
                 await t.user.update(order_user)
@@ -971,7 +977,7 @@ class OrderService:
                     type="PAYMENT",
                     amount=inst_model.amount,
                     parts_line_used=inst_model.amount,
-                    description=f"Cuota pagada{' a tiempo' if is_on_time else ' tarde'}: ${inst_model.amount:.2f}",
+                    description=f"Cuota {'inicial' if is_initial else 'financiada'} pagada{' a tiempo' if is_on_time else ' tarde'}: ${inst_model.amount:.2f}" + (f" (+{points_earned:.2f} pts)" if is_on_time else ""),
                     reference_id=inst_model.id,
                 )
                 # Recalculate level
@@ -1178,16 +1184,28 @@ class OrderService:
             # Only revert points if the installment was actually PAID (points are awarded on mark_paid, not on registration)
             order_user = await t.user.get(str(order_model.user_id))
             if order_user and original_status == "PAID":
-                # Remove the points that were awarded for this payment
-                # Points awarded = inst.amount if on-time, 0 if late
+                # Determine multiplier: 0.5x for initial/de contado, 1.5x for financed
+                all_inst_for_ref = await t.installment.list_by_order(str(order_model.id))
+                all_inst_sorted = sorted(all_inst_for_ref, key=lambda x: x.due_date or datetime.min.replace(tzinfo=timezone.utc))
+                _is_initial = len(all_inst_sorted) > 0 and inst_model.id == all_inst_sorted[0].id
+                _mult = 0.5 if _is_initial else 1.5
+
+                # Determine if it was on time
                 _orig_paid_at = original_paid_at
                 if _orig_paid_at and _orig_paid_at.tzinfo is None:
                     _orig_paid_at = _orig_paid_at.replace(tzinfo=timezone.utc)
-                _due_date = inst_model.due_date
-                if _due_date and _due_date.tzinfo is None:
-                    _due_date = _due_date.replace(tzinfo=timezone.utc)
-                was_on_time = _orig_paid_at is None or _orig_paid_at <= _due_date
-                points_to_remove = inst_model.amount if was_on_time else 0
+                if _is_initial:
+                    _ref_date = order_model.created_at
+                    if _ref_date and _ref_date.tzinfo is None:
+                        _ref_date = _ref_date.replace(tzinfo=timezone.utc)
+                    from datetime import timedelta
+                    was_on_time = _orig_paid_at is None or _orig_paid_at <= _ref_date + timedelta(hours=48)
+                else:
+                    _due_date = inst_model.due_date
+                    if _due_date and _due_date.tzinfo is None:
+                        _due_date = _due_date.replace(tzinfo=timezone.utc)
+                    was_on_time = _orig_paid_at is None or _orig_paid_at <= _due_date
+                points_to_remove = round(inst_model.amount * _mult, 2) if was_on_time else 0
                 if points_to_remove > 0:
                     order_user.credit_points = max(0.0, round(order_user.credit_points - points_to_remove, 2))
 

@@ -1121,10 +1121,8 @@ class ServiceService:
                         reference_id=inst.id,
                     )
 
-                # 3. Points on time: if paid_at <= due_date, grant inst.amount points
-                # For the initial installment (first one created), use so_model.created_at
-                # as reference + 48h grace period, since due_date = now at creation time
-                # and the workshop verifies later, making paid_at > due_date.
+                # 3. Points on time: if paid_at <= due_date, grant points
+                # Financing incentive: 1.5x points for financed installments, 0.5x for initial/de contado
                 from datetime import timedelta
                 _paid_at = inst.paid_at
                 if _paid_at and _paid_at.tzinfo is None:
@@ -1132,17 +1130,24 @@ class ServiceService:
                 _all_insts = sorted(so_model.installments or [], key=lambda x: x.created_at or datetime.min.replace(tzinfo=timezone.utc))
                 _is_initial = len(_all_insts) > 0 and inst.id == _all_insts[0].id
                 if _is_initial:
+                    # Initial / de contado: 0.5x points
+                    points_multiplier = 0.5
                     _ref_date = so_model.created_at
                     if _ref_date and _ref_date.tzinfo is None:
                         _ref_date = _ref_date.replace(tzinfo=timezone.utc)
                     is_on_time = _paid_at is None or _paid_at <= _ref_date + timedelta(hours=48)
                 else:
+                    # Financed installments: 1.5x points (incentivizes financing)
+                    points_multiplier = 1.5
                     _due_date = inst.due_date
                     if _due_date and _due_date.tzinfo is None:
                         _due_date = _due_date.replace(tzinfo=timezone.utc)
                     is_on_time = _paid_at is None or _paid_at <= _due_date
                 if is_on_time:
-                    order_user.credit_points = round(order_user.credit_points + inst.amount, 2)
+                    points_earned = round(inst.amount * points_multiplier, 2)
+                    order_user.credit_points = round(order_user.credit_points + points_earned, 2)
+                else:
+                    points_earned = 0
 
                 await t.user.update(order_user)
                 await t.credit_history.add_entry(
@@ -1150,7 +1155,7 @@ class ServiceService:
                     type="PAYMENT",
                     amount=inst.amount,
                     service_line_used=inst.amount,
-                    description=f"Cuota de servicio pagada{' a tiempo' if is_on_time else ' tarde'}: ${inst.amount:.2f}",
+                    description=f"Cuota de servicio {'inicial' if _is_initial else 'financiada'} pagada{' a tiempo' if is_on_time else ' tarde'}: ${inst.amount:.2f}" + (f" (+{points_earned:.2f} pts)" if is_on_time else ""),
                     reference_id=inst.id,
                 )
                 credit_svc = CreditService.__new__(CreditService)
@@ -1283,15 +1288,27 @@ class ServiceService:
             # Only revert points if the installment was actually PAID (points are awarded on mark_paid, not on registration)
             order_user = await t.user.get(str(so_model.user_id))
             if order_user and original_status == "PAID":
-                # Remove points that were awarded
+                # Determine multiplier: 0.5x for initial/de contado, 1.5x for financed
+                _all_insts = sorted(so_model.installments or [], key=lambda x: x.created_at or datetime.min.replace(tzinfo=timezone.utc))
+                _is_init = len(_all_insts) > 0 and inst.id == _all_insts[0].id
+                _mult = 0.5 if _is_init else 1.5
+
+                # Determine if it was on time
                 _orig_paid_at = original_paid_at
                 if _orig_paid_at and _orig_paid_at.tzinfo is None:
                     _orig_paid_at = _orig_paid_at.replace(tzinfo=timezone.utc)
-                _due_date = inst.due_date
-                if _due_date and _due_date.tzinfo is None:
-                    _due_date = _due_date.replace(tzinfo=timezone.utc)
-                was_on_time = _orig_paid_at is None or _orig_paid_at <= _due_date
-                points_to_remove = inst.amount if was_on_time else 0
+                if _is_init:
+                    _ref_date = so_model.created_at
+                    if _ref_date and _ref_date.tzinfo is None:
+                        _ref_date = _ref_date.replace(tzinfo=timezone.utc)
+                    from datetime import timedelta
+                    was_on_time = _orig_paid_at is None or _orig_paid_at <= _ref_date + timedelta(hours=48)
+                else:
+                    _due_date = inst.due_date
+                    if _due_date and _due_date.tzinfo is None:
+                        _due_date = _due_date.replace(tzinfo=timezone.utc)
+                    was_on_time = _orig_paid_at is None or _orig_paid_at <= _due_date
+                points_to_remove = round(inst.amount * _mult, 2) if was_on_time else 0
                 if points_to_remove > 0:
                     order_user.credit_points = max(0.0, round(order_user.credit_points - points_to_remove, 2))
 

@@ -84,8 +84,9 @@ class CreditService:
             calculated_parts_debt = round(sum(row[0] for row in r.all()), 2)
 
             # Pending parts points (only PENDING + PENDING_VERIFICATION, not OVERDUE)
+            # Financing incentive: 1.5x for financed installments, 0.5x for initial/de contado
             parts_stmt = (
-                select(InstModel.amount)
+                select(InstModel.id, InstModel.amount, InstModel.order_id, InstModel.due_date)
                 .join(OrdModel, InstModel.order_id == OrdModel.id)
                 .where(
                     OrdModel.user_id == user_id,
@@ -95,7 +96,21 @@ class CreditService:
                 )
             )
             r = await t.user._session.execute(parts_stmt)
-            pending_parts_points = sum(row[0] for row in r.all())
+            parts_rows = r.all()
+            # Group by order to determine initial vs financed
+            parts_by_order: dict = {}
+            for row in parts_rows:
+                oid = str(row[2])
+                if oid not in parts_by_order:
+                    parts_by_order[oid] = []
+                parts_by_order[oid].append((row[0], row[1], row[3]))
+            pending_parts_points = 0.0
+            for oid, insts in parts_by_order.items():
+                insts.sort(key=lambda x: x[2] or datetime.min.replace(tzinfo=timezone.utc))
+                for i, (_, amt, _) in enumerate(insts):
+                    mult = 0.5 if i == 0 else 1.5
+                    pending_parts_points += amt * mult
+            pending_parts_points = round(pending_parts_points, 2)
 
             # Calculate service debt dynamically
             svc_debt_stmt = (
@@ -110,7 +125,7 @@ class CreditService:
             calculated_service_debt = round(sum(row[0] for row in r.all()), 2)
 
             svc_stmt = (
-                select(SOIModel.amount)
+                select(SOIModel.id, SOIModel.amount, SOIModel.service_order_id, SOIModel.due_date)
                 .join(SOModel, SOIModel.service_order_id == SOModel.id)
                 .where(
                     SOModel.user_id == user_id,
@@ -118,7 +133,21 @@ class CreditService:
                 )
             )
             r = await t.user._session.execute(svc_stmt)
-            pending_svc_points = sum(row[0] for row in r.all())
+            svc_rows = r.all()
+            # Group by service order to determine initial vs financed
+            svc_by_order: dict = {}
+            for row in svc_rows:
+                soid = str(row[2])
+                if soid not in svc_by_order:
+                    svc_by_order[soid] = []
+                svc_by_order[soid].append((row[0], row[1], row[3]))
+            pending_svc_points = 0.0
+            for soid, insts in svc_by_order.items():
+                insts.sort(key=lambda x: x[2] or datetime.min.replace(tzinfo=timezone.utc))
+                for i, (_, amt, _) in enumerate(insts):
+                    mult = 0.5 if i == 0 else 1.5
+                    pending_svc_points += amt * mult
+            pending_svc_points = round(pending_svc_points, 2)
 
             dto = MyCreditLineDTO(
                 level=user.credit_level,
